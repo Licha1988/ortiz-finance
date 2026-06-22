@@ -1,0 +1,38 @@
+---
+description: Reglas del proyecto Casa Ortiz Finance (cashflow e inversión)
+globs:
+alwaysApply: true
+---
+
+# Casa Ortiz Finance
+
+Proyecto **separado** de la app operativa (`ortiz`). Solo cashflow, EERR, inversión.
+
+## Estructura
+
+- Lógica en `lib/` (pura, sin JSX).
+- UI en `components/`; primitivas en `components/ui/`.
+- Imports con alias `@/*`.
+- Tokens en `lib/ui/tokens.ts`.
+
+## React
+
+- Derivar datos con `useMemo` sobre funciones puras de `lib/`. NUNCA con `setState` en `useEffect`.
+- Estado local en componentes; sin hub operativo.
+
+## UI
+
+Seguir `DESIGN_SYSTEM.md` y `AGENTS.md`.
+
+- Toda pantalla: `AppHeader` + `PageLayout`.
+- Tablas densas, `compactCurrency`, KPIs con `KpiCard`.
+- Empty state: título + descripción + acción.
+
+## Build
+
+- Windows + PowerShell: encadenar con `;`.
+- Validar con `npm run build` y `npm run lint`.
+
+## Auth local
+
+En `.env.local`, `AUTH_USERS` debe tener `\$` antes de cada `$` del hash bcrypt.
