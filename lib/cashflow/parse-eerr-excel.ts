@@ -1,15 +1,3 @@
-import { applyEerrBusinessRules } from "@/lib/cashflow/eerr-rules";
-import {
-  applyEerrModelParams,
-  applyEerrParamDisplay,
-  type ApplyEerrModelOptions,
-} from "@/lib/cashflow/eerr-model-params";
-import {
-  EERR_YEAR_RANGES,
-  FULL_RAMP_SCHEDULE,
-  type EerrYearId,
-  type EerrYearSlice,
-} from "@/lib/cashflow/eerr-years";
 import { CASHFLOW_MONTHS } from "@/lib/cashflow/months";
 import {
   type DisplayCurrency,
@@ -17,7 +5,12 @@ import {
 import { convertMonetaryValue } from "@/lib/cashflow/exchange-rate";
 import { compactCurrency, formatCovers, formatCurrency, formatPercent } from "@/lib/format";
 import { extendEerrHorizon } from "@/lib/cashflow/extend-eerr-horizon";
-import { EERR_HORIZON_YEARS } from "@/lib/cashflow/eerr-years";
+import {
+  EERR_HORIZON_YEARS,
+  EERR_YEAR_RANGES,
+  type EerrYearId,
+  type EerrYearSlice,
+} from "@/lib/cashflow/eerr-years";
 
 export const EERR_SHEET_NAME = "EERR Mensual";
 
@@ -151,14 +144,6 @@ function formatParamValue(value: unknown): string {
   return String(numeric);
 }
 
-function modelOptionsForYear(yearId: EerrYearId, fullRamp: boolean): ApplyEerrModelOptions {
-  if (!fullRamp) return {};
-  return {
-    salesRampSchedule: FULL_RAMP_SCHEDULE,
-    fullNominaRamp: true,
-  };
-}
-
 function parseRowsForYear(
   sheet: Record<string, { v?: unknown }>,
   XLSX: XlsxModule,
@@ -272,19 +257,12 @@ export async function parseEerrExcelFromBuffer(
     throw new Error(`No se encontró la hoja "${sheetName}".`);
   }
 
-  const years: EerrYearSlice[] = EERR_YEAR_RANGES.map((range) => {
-    const rawRows = parseRowsForYear(sheet, XLSX, range.colStart, range.colEnd, range.id);
-    const processed = applyEerrModelParams(
-      applyEerrBusinessRules(rawRows),
-      modelOptionsForYear(range.id, range.fullRamp),
-    );
-    return {
-      id: range.id,
-      label: range.label,
-      months: monthHeadersForYear(sheet, XLSX, range.colStart, range.colEnd),
-      rows: processed,
-    };
-  });
+  const years: EerrYearSlice[] = EERR_YEAR_RANGES.map((range) => ({
+    id: range.id,
+    label: range.label,
+    months: monthHeadersForYear(sheet, XLSX, range.colStart, range.colEnd),
+    rows: parseRowsForYear(sheet, XLSX, range.colStart, range.colEnd, range.id),
+  }));
 
   const params: EerrParam[] = [];
   for (let row = PARAM_ROW_START; row <= PARAM_ROW_END; row++) {
@@ -303,7 +281,7 @@ export async function parseEerrExcelFromBuffer(
     sourceFileName: fileName,
     sheetName,
     years,
-    params: applyEerrParamDisplay(params),
+    params: params,
     months: primary?.months ?? [...CASHFLOW_MONTHS],
     rows: primary?.rows ?? [],
   };

@@ -7,13 +7,8 @@ import EmptyState from "@/components/ui/EmptyState";
 import KpiCard from "@/components/ui/KpiCard";
 import SectionCard from "@/components/ui/SectionCard";
 import { findEerrRow } from "@/lib/cashflow/parse-eerr-excel";
-import {
-  applyEerrAfterNominaRampEdit,
-  TICKET_PROMEDIO,
-} from "@/lib/cashflow/eerr-model-params";
-import { setNominaRampMonth } from "@/lib/cashflow/eerr-nomina";
 import { type EerrYearId } from "@/lib/cashflow/eerr-years";
-import { formatCurrency, formatMillionsForCurrency, formatPercent } from "@/lib/format";
+import { formatMillionsForCurrency, formatPercent } from "@/lib/format";
 import {
   DEFAULT_EXCHANGE_RATE,
   type DisplayCurrency,
@@ -31,7 +26,6 @@ export default function CashflowExcelView() {
     loadError,
     replaceFromFile,
     restoreBundled,
-    updateYearRows,
   } = useEerrModel();
   const [activeYearId, setActiveYearId] = useState<EerrYearId>("year1");
   const [exchangeRate, setExchangeRate] = useState(DEFAULT_EXCHANGE_RATE);
@@ -101,18 +95,12 @@ export default function CashflowExcelView() {
     };
   }, [activeYear]);
 
-  const handleNominaRampChange = useCallback(
-    (monthIndex: number, ratio: number) => {
-      if (activeYearId !== "year1") return;
-      const year1 = parsed.years.find((year) => year.id === "year1");
-      if (!year1) return;
-      const nextRows = applyEerrAfterNominaRampEdit(
-        setNominaRampMonth(year1.rows, monthIndex, ratio),
-      );
-      updateYearRows("year1", nextRows);
-    },
-    [activeYearId, parsed.years, updateYearRows],
-  );
+  const ticketLabel = useMemo(() => {
+    const param = parsed.params.find((item) =>
+      item.label.toLowerCase().includes("ticket"),
+    );
+    return param?.displayValue ?? "—";
+  }, [parsed.params]);
 
   const isBundledModel = isBundledEerrModel(source, parsed);
   const yearLabel = activeYear?.label ?? "Año 1";
@@ -120,10 +108,10 @@ export default function CashflowExcelView() {
 
   const subtitle = useMemo(() => {
     if (source === "import") {
-      return `${parsed.sourceFileName} · modelo activo (Excel importado)`;
+      return `${parsed.sourceFileName} · espejo del Excel (valores del archivo)`;
     }
     if (isBundledModel) {
-      return `${BUNDLED_EERR_SOURCE_NAME} · desde el repo · Años 1–10 (Años 2–10 al 100%)`;
+      return `${BUNDLED_EERR_SOURCE_NAME} · espejo del Excel del repo · Años 1–2 del archivo; 3–10 clonados de Año 2`;
     }
     return "Modelo embebido (fallback) · no se pudo cargar el Excel del repo";
   }, [isBundledModel, parsed.sourceFileName, source]);
@@ -244,10 +232,7 @@ export default function CashflowExcelView() {
                   value={formatMillionsForCurrency(kpis.yearSales, displayCurrency, exchangeRate)}
                   detail={{
                     label: "Ticket promedio",
-                    value:
-                      displayCurrency === "usd"
-                        ? formatMillionsForCurrency(TICKET_PROMEDIO, displayCurrency, exchangeRate)
-                        : formatCurrency(TICKET_PROMEDIO),
+                    value: ticketLabel,
                   }}
                   tone="violet"
                 />
@@ -277,9 +262,6 @@ export default function CashflowExcelView() {
                   months={activeYear?.months ?? []}
                   displayCurrency={displayCurrency}
                   exchangeRate={exchangeRate}
-                  onNominaRampChange={
-                    activeYearId === "year1" ? handleNominaRampChange : undefined
-                  }
                   meta={{
                     yearLabel,
                   }}
