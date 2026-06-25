@@ -3,8 +3,7 @@ import { parseEerrExcelFromBuffer } from "../lib/cashflow/parse-eerr-excel";
 
 async function main() {
   const excelPath =
-    process.argv[2] ??
-    "C:/Users/Lisandro/OneDrive/Escritorio/Ortiz cashflow Diego.xlsx";
+    process.argv[2] ?? "public/models/ortiz-cashflow.xlsx";
 
   const buffer = readFileSync(excelPath);
   const parsed = await parseEerrExcelFromBuffer(

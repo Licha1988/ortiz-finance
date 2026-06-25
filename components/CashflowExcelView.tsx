@@ -2,15 +2,11 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import EerrStatementTable from "@/components/EerrStatementTable";
+import { isBundledEerrModel, useEerrModel } from "@/components/EerrModelProvider";
 import EmptyState from "@/components/ui/EmptyState";
 import KpiCard from "@/components/ui/KpiCard";
 import SectionCard from "@/components/ui/SectionCard";
-import {
-  findEerrRow,
-  parseEerrExcelFromBuffer,
-  type ParsedEerrExcel,
-} from "@/lib/cashflow/parse-eerr-excel";
-import { DEFAULT_EERR_DATA } from "@/lib/cashflow/default-eerr";
+import { findEerrRow } from "@/lib/cashflow/parse-eerr-excel";
 import {
   applyEerrAfterNominaRampEdit,
   TICKET_PROMEDIO,
@@ -24,65 +20,41 @@ import {
 } from "@/lib/cashflow/exchange-rate";
 import { isFullOperationYear } from "@/lib/cashflow/eerr-years";
 import EerrCurrencyBar from "@/components/EerrCurrencyBar";
-
-function syncPrimaryYear(parsed: ParsedEerrExcel): ParsedEerrExcel {
-  const primary = parsed.years[0];
-  if (!primary) return parsed;
-  return {
-    ...parsed,
-    months: primary.months,
-    rows: primary.rows,
-  };
-}
-
-function updateYearRows(
-  parsed: ParsedEerrExcel,
-  yearId: EerrYearId,
-  rows: ParsedEerrExcel["rows"],
-): ParsedEerrExcel {
-  const years = parsed.years.map((year) =>
-    year.id === yearId ? { ...year, rows } : year,
-  );
-  const next = { ...parsed, years };
-  return yearId === "year1" ? syncPrimaryYear(next) : next;
-}
+import { BUNDLED_EERR_SOURCE_NAME } from "@/lib/cashflow/load-eerr-model";
 
 export default function CashflowExcelView() {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [parsed, setParsed] = useState<ParsedEerrExcel>(DEFAULT_EERR_DATA);
+  const {
+    parsed,
+    source,
+    loading,
+    loadError,
+    replaceFromFile,
+    restoreBundled,
+    updateYearRows,
+  } = useEerrModel();
   const [activeYearId, setActiveYearId] = useState<EerrYearId>("year1");
   const [exchangeRate, setExchangeRate] = useState(DEFAULT_EXCHANGE_RATE);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("ars");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   const activeYear =
     parsed.years.find((year) => year.id === activeYearId) ?? parsed.years[0];
 
-  const processFile = useCallback(async (file: File) => {
-    if (!file.name.match(/\.xlsx?$/i)) {
-      setError("Subí un archivo Excel (.xlsx).");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const result = await parseEerrExcelFromBuffer(buffer, file.name);
-      if (result.years.length === 0 || result.years[0]?.rows.length === 0) {
-        throw new Error("No se encontraron filas del EERR.");
+  const processFile = useCallback(
+    async (file: File) => {
+      setImportError(null);
+      try {
+        await replaceFromFile(file);
+      } catch (caught) {
+        setImportError(
+          caught instanceof Error ? caught.message : "No se pudo leer el archivo.",
+        );
       }
-      setParsed(syncPrimaryYear(result));
-    } catch (caught) {
-      setParsed(DEFAULT_EERR_DATA);
-      setError(caught instanceof Error ? caught.message : "No se pudo leer el archivo.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [replaceFromFile],
+  );
 
   const handleFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -129,20 +101,32 @@ export default function CashflowExcelView() {
     };
   }, [activeYear]);
 
-  const handleNominaRampChange = useCallback((monthIndex: number, ratio: number) => {
-    if (activeYearId !== "year1") return;
-    setParsed((prev) => {
-      const year1 = prev.years.find((year) => year.id === "year1");
-      if (!year1) return prev;
+  const handleNominaRampChange = useCallback(
+    (monthIndex: number, ratio: number) => {
+      if (activeYearId !== "year1") return;
+      const year1 = parsed.years.find((year) => year.id === "year1");
+      if (!year1) return;
       const nextRows = applyEerrAfterNominaRampEdit(
         setNominaRampMonth(year1.rows, monthIndex, ratio),
       );
-      return updateYearRows(prev, "year1", nextRows);
-    });
-  }, [activeYearId]);
+      updateYearRows("year1", nextRows);
+    },
+    [activeYearId, parsed.years, updateYearRows],
+  );
 
-  const isDefaultModel = parsed.sourceFileName === DEFAULT_EERR_DATA.sourceFileName;
+  const isBundledModel = isBundledEerrModel(source, parsed);
   const yearLabel = activeYear?.label ?? "Año 1";
+  const error = importError ?? (source === "fallback" ? loadError : null);
+
+  const subtitle = useMemo(() => {
+    if (source === "import") {
+      return `${parsed.sourceFileName} · modelo activo (Excel importado)`;
+    }
+    if (isBundledModel) {
+      return `${BUNDLED_EERR_SOURCE_NAME} · desde el repo · Años 1–10 (Años 2–10 al 100%)`;
+    }
+    return "Modelo embebido (fallback) · no se pudo cargar el Excel del repo";
+  }, [isBundledModel, parsed.sourceFileName, source]);
 
   return (
     <div className="space-y-4">
@@ -155,11 +139,7 @@ export default function CashflowExcelView() {
 
       <SectionCard
         title={`Modelo Excel — EERR ${yearLabel}`}
-        subtitle={
-          isDefaultModel
-            ? "Modelo base · Años 1–10 (Años 2–10 al 100%)"
-            : `${parsed.sourceFileName} · importado en esta sesión`
-        }
+        subtitle={subtitle}
         tone="cashflow"
         className="rounded-2xl ring-1 ring-stone-200/60"
       >
@@ -213,9 +193,19 @@ export default function CashflowExcelView() {
                 <span className="rounded-full bg-stone-200/70 px-3 py-1 text-xs font-medium text-stone-700">
                   {activeYear?.months.length ?? 0} meses
                 </span>
-                {isDefaultModel ? (
+                {source === "import" ? (
+                  <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-medium text-violet-900">
+                    Excel activo
+                  </span>
+                ) : null}
+                {isBundledModel ? (
                   <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-800">
-                    Modelo base
+                    Repo
+                  </span>
+                ) : null}
+                {source === "fallback" ? (
+                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
+                    Fallback
                   </span>
                 ) : null}
               </div>
@@ -223,12 +213,13 @@ export default function CashflowExcelView() {
                 <button
                   type="button"
                   onClick={() => {
-                    setParsed(DEFAULT_EERR_DATA);
+                    void restoreBundled();
                     setActiveYearId("year1");
+                    setImportError(null);
                   }}
                   className="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50"
                 >
-                  Restaurar base
+                  Restaurar repo
                 </button>
                 <button
                   type="button"

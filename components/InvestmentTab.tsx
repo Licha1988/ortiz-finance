@@ -1,17 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useEerrModel } from "@/components/EerrModelProvider";
 import KpiCard from "@/components/ui/KpiCard";
 import SectionCard from "@/components/ui/SectionCard";
-import { DEFAULT_EERR_DATA } from "@/lib/cashflow/default-eerr";
 import { TICKET_PROMEDIO } from "@/lib/cashflow/eerr-model-params";
 import {
   extractBaseAnnualCovers,
 } from "@/lib/cashflow/scenario-simulator";
 import { DEFAULT_EXCHANGE_RATE, currencyLabel, type DisplayCurrency } from "@/lib/cashflow/exchange-rate";
 import {
-  DEFAULT_KWACC_FINAL,
-  DEFAULT_KWACC_INITIAL,
   DEFAULT_LOAN_RATE_ANNUAL,
   EQUITY_INVESTMENT_USD,
   TOTAL_INVESTMENT_USD,
@@ -38,8 +36,17 @@ import {
   buildInvestorCashflow,
   type InvestmentModelParams,
 } from "@/lib/investment/investor-cashflow";
+import {
+  buildKwaccScheduleFromWaccInputs,
+  buildProjectValuation,
+  cloneDefaultCountryRiskEvolution,
+  DEFAULT_WACC_INPUTS,
+  type WaccValuationInputs,
+} from "@/lib/investment/wacc-valuation";
 import InvestmentSection from "@/components/InvestmentSection";
 import ScenarioHorizonChart from "@/components/ScenarioHorizonChart";
+import WaccValuationSection from "@/components/WaccValuationSection";
+import ParamField from "@/components/ui/ParamField";
 import {
   formatCovers,
   formatCurrency,
@@ -47,7 +54,6 @@ import {
   compactFromUsd,
   compactMoney,
 } from "@/lib/format";
-import { editableInput } from "@/lib/ui/tokens";
 
 const TICKET_MIN = 20_000;
 const TICKET_MAX = 50_000;
@@ -97,54 +103,43 @@ function SliderRow({ label, helper, value, min, max, step, display, onChange }: 
   );
 }
 
-type ParamFieldProps = {
-  label: string;
-  helper?: string;
-  value: number;
-  onChange: (value: number) => void;
-  format: (value: number) => string;
-  parse: (raw: string) => number | null;
-};
-
-function ParamField({ label, helper, value, onChange, format, parse }: ParamFieldProps) {
-  return (
-    <label className="block space-y-1">
-      <span className="text-xs font-medium text-stone-600">{label}</span>
-      {helper ? <span className="block text-[11px] text-stone-400">{helper}</span> : null}
-      <input
-        type="text"
-        defaultValue={format(value)}
-        key={`${label}-${value}`}
-        onBlur={(event) => {
-          const parsed = parse(event.target.value);
-          if (parsed !== null) onChange(parsed);
-        }}
-        className={`w-full rounded-lg border border-stone-200 px-3 py-2 text-right text-sm font-semibold tabular-nums text-stone-900 ${editableInput}`}
-      />
-    </label>
-  );
-}
-
 export default function InvestmentTab() {
+  const { parsed: eerrModel } = useEerrModel();
   const [exchangeRate, setExchangeRate] = useState(DEFAULT_EXCHANGE_RATE);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
   const [equityUsd, setEquityUsd] = useState(EQUITY_INVESTMENT_USD);
   const [totalUsd, setTotalUsd] = useState(TOTAL_INVESTMENT_USD);
   const [loanRatePct, setLoanRatePct] = useState(DEFAULT_LOAN_RATE_ANNUAL * 100);
-  const [kwaccInitialPct, setKwaccInitialPct] = useState(DEFAULT_KWACC_INITIAL * 100);
-  const [kwaccFinalPct, setKwaccFinalPct] = useState(DEFAULT_KWACC_FINAL * 100);
+  const [waccInputs, setWaccInputs] = useState<WaccValuationInputs>(DEFAULT_WACC_INPUTS);
+  const [countryRiskEvolution, setCountryRiskEvolution] = useState(cloneDefaultCountryRiskEvolution);
 
   const [ticket, setTicket] = useState(TICKET_PROMEDIO);
   const [volumeIndex, setVolumeIndex] = useState(VOLUME_INDEX_DEFAULT);
 
   const loanPrincipal = loanPrincipalFromStructure(totalUsd, equityUsd);
   const loanRate = loanRatePct / 100;
-  const kwaccInitial = kwaccInitialPct / 100;
-  const kwaccFinal = kwaccFinalPct / 100;
+
+  const waccInputsEffective = useMemo(
+    (): WaccValuationInputs => ({
+      ...waccInputs,
+      projectDebtToValue: totalUsd > 0 ? loanPrincipal / totalUsd : 0,
+    }),
+    [waccInputs, loanPrincipal, totalUsd],
+  );
+
+  const kwaccSchedule = useMemo(
+    () => buildKwaccScheduleFromWaccInputs(waccInputsEffective, undefined, countryRiskEvolution),
+    [waccInputsEffective, countryRiskEvolution],
+  );
+
+  const kwaccForInvestorDiscount = useMemo(
+    () => kwaccSchedule.slice(1, kwaccSchedule.length),
+    [kwaccSchedule],
+  );
 
   const baseYear1Rows = useMemo(
-    () => DEFAULT_EERR_DATA.years[0]?.rows ?? [],
-    [],
+    () => eerrModel.years[0]?.rows ?? [],
+    [eerrModel],
   );
   const baseAnnualCovers = useMemo(
     () => extractBaseAnnualCovers(baseYear1Rows),
@@ -157,8 +152,8 @@ export default function InvestmentTab() {
   );
 
   const totalCovers10y = useMemo(
-    () => totalHorizonCovers(DEFAULT_EERR_DATA.years, coversScale),
-    [coversScale],
+    () => totalHorizonCovers(eerrModel.years, coversScale),
+    [eerrModel.years, coversScale],
   );
 
   const annualCoversYear1 = useMemo(
@@ -168,12 +163,12 @@ export default function InvestmentTab() {
 
   const businessFlows = useMemo(
     () =>
-      buildBusinessFlowsFromEerr(DEFAULT_EERR_DATA.years, {
+      buildBusinessFlowsFromEerr(eerrModel.years, {
         ticket,
         coversScale,
         exchangeRate,
       }),
-    [ticket, coversScale, exchangeRate],
+    [eerrModel.years, ticket, coversScale, exchangeRate],
   );
 
   const simY1 = useMemo(
@@ -186,10 +181,14 @@ export default function InvestmentTab() {
       equityUsd,
       totalInvestmentUsd: totalUsd,
       loanRateAnnual: loanRate,
-      kwaccInitial,
-      kwaccFinal,
+      kwaccInitial: kwaccForInvestorDiscount[0] ?? kwaccSchedule[0] ?? 0,
+      kwaccFinal:
+        kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ??
+        kwaccSchedule[kwaccSchedule.length - 1] ??
+        0,
+      kwaccSchedule: kwaccForInvestorDiscount,
     }),
-    [equityUsd, totalUsd, loanRate, kwaccInitial, kwaccFinal],
+    [equityUsd, totalUsd, loanRate, kwaccForInvestorDiscount, kwaccSchedule],
   );
 
   const cashflow = useMemo(
@@ -197,15 +196,27 @@ export default function InvestmentTab() {
     [investmentParams, businessFlows],
   );
 
+  const projectValuation = useMemo(
+    () =>
+      buildProjectValuation({
+        equityInvestmentUsd: equityUsd,
+        exchangeRate,
+        waccInputs: waccInputsEffective,
+        businessFlows,
+        countryRiskEvolution,
+      }),
+    [equityUsd, exchangeRate, waccInputsEffective, businessFlows, countryRiskEvolution],
+  );
+
   const chartSeries = useMemo(
     () =>
       buildScenarioChartSeries(
-        DEFAULT_EERR_DATA.years,
+        eerrModel.years,
         businessFlows,
         cashflow.equityCashFlows,
         coversScale,
       ),
-    [businessFlows, cashflow.equityCashFlows, coversScale],
+    [eerrModel.years, businessFlows, cashflow.equityCashFlows, coversScale],
   );
 
   const totals10y = useMemo(() => {
@@ -214,16 +225,28 @@ export default function InvestmentTab() {
     return { nopat, dividends };
   }, [businessFlows, cashflow.years]);
 
+  const handleResetCountryRiskEvolution = () => {
+    setCountryRiskEvolution(cloneDefaultCountryRiskEvolution());
+  };
+
   const handleReset = () => {
     setExchangeRate(DEFAULT_EXCHANGE_RATE);
     setDisplayCurrency("usd");
     setEquityUsd(EQUITY_INVESTMENT_USD);
     setTotalUsd(TOTAL_INVESTMENT_USD);
     setLoanRatePct(DEFAULT_LOAN_RATE_ANNUAL * 100);
-    setKwaccInitialPct(DEFAULT_KWACC_INITIAL * 100);
-    setKwaccFinalPct(DEFAULT_KWACC_FINAL * 100);
+    setWaccInputs(DEFAULT_WACC_INPUTS);
+    setCountryRiskEvolution(cloneDefaultCountryRiskEvolution());
     setTicket(TICKET_PROMEDIO);
     setVolumeIndex(VOLUME_INDEX_DEFAULT);
+  };
+
+  const handleCountryRiskEvolutionChange = (yearIndex: number, value: number) => {
+    setCountryRiskEvolution((prev) => {
+      const next = [...prev];
+      next[yearIndex] = value;
+      return next;
+    });
   };
 
   return (
@@ -251,7 +274,7 @@ export default function InvestmentTab() {
               onClick={handleReset}
               className="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50"
             >
-              Restaurar valores base
+              Restablecer valores originales
             </button>
           </div>
         </div>
@@ -344,26 +367,25 @@ export default function InvestmentTab() {
                 return Number.isFinite(n) && n >= 0 ? n : null;
               }}
             />
-            <ParamField
-              label="Kwacc inicial"
-              value={kwaccInitialPct}
-              onChange={setKwaccInitialPct}
-              format={(v) => `${v.toFixed(2)}%`}
-              parse={(raw) => {
-                const n = Number(raw.replace(",", ".").replace("%", ""));
-                return Number.isFinite(n) && n >= 0 ? n : null;
-              }}
-            />
-            <ParamField
-              label="Kwacc final (año 11)"
-              value={kwaccFinalPct}
-              onChange={setKwaccFinalPct}
-              format={(v) => `${v.toFixed(2)}%`}
-              parse={(raw) => {
-                const n = Number(raw.replace(",", ".").replace("%", ""));
-                return Number.isFinite(n) && n >= 0 ? n : null;
-              }}
-            />
+            <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs text-stone-600">
+              <p>
+                Kwacc Año 1:{" "}
+                <span className="font-semibold tabular-nums text-stone-900">
+                  {formatPercent(kwaccForInvestorDiscount[0] ?? 0, 2)}
+                </span>
+                {" · "}
+                maduro:{" "}
+                <span className="font-semibold tabular-nums text-stone-900">
+                  {formatPercent(
+                    kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ?? 0,
+                    2,
+                  )}
+                </span>
+              </p>
+              <p className="mt-1 text-[11px] text-stone-500">
+                Calculado en Valuación por WACC (inputs editables abajo).
+              </p>
+            </div>
             <div className="rounded-lg border border-amber-100 bg-amber-50/80 px-3 py-2 text-xs text-stone-600">
               <p>
                 Préstamo:{" "}
@@ -574,6 +596,18 @@ export default function InvestmentTab() {
           </p>
         </div>
       </SectionCard>
+
+      <WaccValuationSection
+        waccInputs={waccInputsEffective}
+        onWaccInputsChange={(patch) => setWaccInputs((prev) => ({ ...prev, ...patch }))}
+        countryRiskEvolution={countryRiskEvolution}
+        onCountryRiskEvolutionChange={handleCountryRiskEvolutionChange}
+        onResetCountryRiskEvolution={handleResetCountryRiskEvolution}
+        onReset={handleReset}
+        valuation={projectValuation}
+        displayCurrency={displayCurrency}
+        exchangeRate={exchangeRate}
+      />
     </div>
   );
 }

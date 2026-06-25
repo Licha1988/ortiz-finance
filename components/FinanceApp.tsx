@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import AppHeader from "@/components/AppHeader";
 import CashflowExcelView from "@/components/CashflowExcelView";
+import { EerrModelProvider } from "@/components/EerrModelProvider";
 import FinanceTabs from "@/components/FinanceTabs";
 import InvestmentTab from "@/components/InvestmentTab";
 import PipelineSection from "@/components/PipelineSection";
@@ -38,12 +39,14 @@ export default function FinanceApp({ username }: FinanceAppProps) {
         loggingOut={loggingOut}
       />
       <PageLayout className="pb-12">
-        <FinanceTabs activeTab={activeTab} onTabChange={setActiveTab} />
-        <div className="mt-6">
-          {activeTab === "eerr" ? <CashflowExcelView /> : null}
-          {activeTab === "pipeline" ? <PipelineSection /> : null}
-          {activeTab === "investment" ? <InvestmentTab /> : null}
-        </div>
+        <EerrModelProvider>
+          <FinanceTabs activeTab={activeTab} onTabChange={setActiveTab} />
+          <div className="mt-6">
+            {activeTab === "eerr" ? <CashflowExcelView /> : null}
+            {activeTab === "pipeline" ? <PipelineSection /> : null}
+            {activeTab === "investment" ? <InvestmentTab /> : null}
+          </div>
+        </EerrModelProvider>
       </PageLayout>
     </div>
   );

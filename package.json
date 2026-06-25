@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "export-eerr": "tsx scripts/export-default-eerr.ts"
+    "export-eerr": "tsx scripts/export-default-eerr.ts",
+    "sync-eerr-from-drive": "tsx scripts/sync-eerr-from-drive.ts"
   },
   "dependencies": {
+    "@vercel/blob": "^2.5.0",
     "bcryptjs": "^3.0.3",
     "jose": "^6.2.3",
     "next": "16.2.9",

@@ -21,6 +21,8 @@ export type InvestmentModelParams = {
   loanRateAnnual: number;
   kwaccInitial: number;
   kwaccFinal: number;
+  /** Si se provee, reemplaza la interpolación lineal inicial→final. */
+  kwaccSchedule?: number[];
 };
 
 export type InvestorCashflowYear = LoanServiceYear &
@@ -58,8 +60,11 @@ export function buildInvestorCashflow(
 
   const equityFlows = equityCashFlows(params.equityUsd, loanSchedule);
 
-  const kwaccByYear = buildKwaccSchedule(horizon, params.kwaccInitial, params.kwaccFinal);
-  const discountRates = [0, ...kwaccByYear.slice(0, horizon)];
+  const kwaccByYear =
+    params.kwaccSchedule && params.kwaccSchedule.length > 0
+      ? params.kwaccSchedule.slice(0, horizon)
+      : buildKwaccSchedule(horizon, params.kwaccInitial, params.kwaccFinal).slice(0, horizon);
+  const discountRates = [0, ...kwaccByYear];
 
   const years: InvestorCashflowYear[] = loanSchedule.map((row, index) => {
     const business = businessFlows[index];
