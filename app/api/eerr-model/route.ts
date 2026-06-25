@@ -1,8 +1,9 @@
-import { del, head, put } from "@vercel/blob";
+import { del, get, put } from "@vercel/blob";
 import { NextResponse } from "next/server";
 
 const MODEL_PATH = "eerr/model.xlsx";
 const META_PATH = "eerr/meta.json";
+const BLOB_ACCESS = "private" as const;
 
 type EerrModelMeta = {
   fileName: string;
@@ -17,10 +18,10 @@ async function readMeta(): Promise<EerrModelMeta | null> {
   if (!blobConfigured()) return null;
 
   try {
-    const metaBlob = await head(META_PATH);
-    const response = await fetch(metaBlob.url, { cache: "no-store" });
-    if (!response.ok) return null;
-    return (await response.json()) as EerrModelMeta;
+    const result = await get(META_PATH, { access: BLOB_ACCESS });
+    if (result.statusCode !== 200 || !result.stream) return null;
+    const text = await new Response(result.stream).text();
+    return JSON.parse(text) as EerrModelMeta;
   } catch {
     return null;
   }
@@ -32,14 +33,14 @@ export async function GET() {
   }
 
   try {
-    const modelBlob = await head(MODEL_PATH);
-    const meta = await readMeta();
-    const response = await fetch(modelBlob.url, { cache: "no-store" });
-    if (!response.ok) {
+    const result = await get(MODEL_PATH, { access: BLOB_ACCESS });
+    if (result.statusCode !== 200 || !result.stream) {
       return new NextResponse(null, { status: 404 });
     }
 
-    const buffer = await response.arrayBuffer();
+    const meta = await readMeta();
+    const buffer = await new Response(result.stream).arrayBuffer();
+
     return new NextResponse(buffer, {
       status: 200,
       headers: {
@@ -80,14 +81,14 @@ export async function POST(request: Request) {
   };
 
   await put(META_PATH, JSON.stringify(meta), {
-    access: "public",
+    access: BLOB_ACCESS,
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json",
   });
 
   await put(MODEL_PATH, file, {
-    access: "public",
+    access: BLOB_ACCESS,
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType:
