@@ -19,7 +19,7 @@ async function readMeta(): Promise<EerrModelMeta | null> {
 
   try {
     const result = await get(META_PATH, { access: BLOB_ACCESS });
-    if (result.statusCode !== 200 || !result.stream) return null;
+    if (!result || result.statusCode !== 200 || !result.stream) return null;
     const text = await new Response(result.stream).text();
     return JSON.parse(text) as EerrModelMeta;
   } catch {
@@ -34,7 +34,7 @@ export async function GET() {
 
   try {
     const result = await get(MODEL_PATH, { access: BLOB_ACCESS });
-    if (result.statusCode !== 200 || !result.stream) {
+    if (!result || result.statusCode !== 200 || !result.stream) {
       return new NextResponse(null, { status: 404 });
     }
 
