@@ -57,6 +57,13 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "La importación de Excel no está disponible en producción." },
+      { status: 403 },
+    );
+  }
+
   if (!blobConfigured()) {
     return NextResponse.json(
       { error: "BLOB_READ_WRITE_TOKEN no configurado en Vercel." },
@@ -99,6 +106,10 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
+  if (process.env.NODE_ENV === "production") {
+    return new NextResponse(null, { status: 403 });
+  }
+
   if (!blobConfigured()) {
     return new NextResponse(null, { status: 404 });
   }

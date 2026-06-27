@@ -4,191 +4,123 @@ import { useMemo, useState } from "react";
 import { useEerrModel } from "@/components/EerrModelProvider";
 import KpiCard from "@/components/ui/KpiCard";
 import SectionCard from "@/components/ui/SectionCard";
-import { TICKET_PROMEDIO } from "@/lib/cashflow/eerr-model-params";
-import {
-  extractBaseAnnualCovers,
-} from "@/lib/cashflow/scenario-simulator";
+import { extractYearKpisFromRows } from "@/lib/cashflow/eerr-kpis";
 import { DEFAULT_EXCHANGE_RATE, currencyLabel, type DisplayCurrency } from "@/lib/cashflow/exchange-rate";
+import { kwaccForInvestorYears } from "@/lib/cashflow/parse-cashflow-excel";
 import {
   DEFAULT_LOAN_RATE_ANNUAL,
+  BASE_KWACC_SCHEDULE,
   EQUITY_INVESTMENT_USD,
-  TOTAL_INVESTMENT_USD,
+  FINANCING_TOTAL_USD,
+  OPERATOR_EQUITY_SHARE,
   loanPrincipalFromStructure,
 } from "@/lib/investment/project-data";
 import {
   CASHFLOW_BRIDGE_LINES,
   type CashflowBridgeLineId,
 } from "@/lib/investment/cashflow-bridge";
-import { WORKING_CAPITAL_DAYS } from "@/lib/investment/working-capital";
-import {
-  buildBusinessFlowsFromEerr,
-} from "@/lib/investment/eerr-operational-flows";
+import { buildBusinessFlowsFromEerr } from "@/lib/investment/eerr-operational-flows";
 import {
   buildScenarioChartSeries,
-  coversScaleFromVolumeIndex,
   totalHorizonCovers,
-  VOLUME_INDEX_DEFAULT,
-  VOLUME_INDEX_MAX,
-  VOLUME_INDEX_MIN,
-  VOLUME_INDEX_STEP,
 } from "@/lib/investment/scenario-volume";
 import {
   buildInvestorCashflow,
   type InvestmentModelParams,
 } from "@/lib/investment/investor-cashflow";
-import {
-  buildKwaccScheduleFromWaccInputs,
-  buildProjectValuation,
-  cloneDefaultCountryRiskEvolution,
-  DEFAULT_WACC_INPUTS,
-  type WaccValuationInputs,
-} from "@/lib/investment/wacc-valuation";
 import InvestmentSection from "@/components/InvestmentSection";
+import EerrExcelActions from "@/components/EerrExcelActions";
 import ScenarioHorizonChart from "@/components/ScenarioHorizonChart";
-import WaccValuationSection from "@/components/WaccValuationSection";
 import ParamField from "@/components/ui/ParamField";
 import {
   formatCovers,
-  formatCurrency,
   formatPercent,
   compactFromUsd,
   compactMoney,
 } from "@/lib/format";
 
-const TICKET_MIN = 20_000;
-const TICKET_MAX = 50_000;
-const TICKET_STEP = 500;
+function withYearZero(yearZero: number, values: number[]): number[] {
+  return [yearZero, ...values];
+}
 
 function bridgeValuesForLine(
   flows: { bridgeLines: { id: CashflowBridgeLineId; amountUsd: number }[] }[],
   lineId: CashflowBridgeLineId,
 ): number[] {
-  return flows.map((flow) => {
+  const values = flows.map((flow) => {
     const line = flow.bridgeLines.find((item) => item.id === lineId);
     return line ? -line.amountUsd : 0;
   });
-}
-
-type SliderRowProps = {
-  label: string;
-  helper?: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  display: string;
-  onChange: (value: number) => void;
-};
-
-function SliderRow({ label, helper, value, min, max, step, display, onChange }: SliderRowProps) {
-  return (
-    <div className="space-y-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <div>
-          <span className="text-xs font-medium text-stone-600">{label}</span>
-          {helper ? <p className="mt-0.5 text-[11px] text-stone-400">{helper}</p> : null}
-        </div>
-        <span className="text-sm font-semibold tabular-nums text-violet-900">{display}</span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-violet-100 accent-violet-700"
-      />
-    </div>
-  );
+  return withYearZero(0, values);
 }
 
 export default function InvestmentTab() {
-  const { parsed: eerrModel } = useEerrModel();
-  const [exchangeRate, setExchangeRate] = useState(DEFAULT_EXCHANGE_RATE);
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
-  const [equityUsd, setEquityUsd] = useState(EQUITY_INVESTMENT_USD);
-  const [totalUsd, setTotalUsd] = useState(TOTAL_INVESTMENT_USD);
-  const [loanRatePct, setLoanRatePct] = useState(DEFAULT_LOAN_RATE_ANNUAL * 100);
-  const [waccInputs, setWaccInputs] = useState<WaccValuationInputs>(DEFAULT_WACC_INPUTS);
-  const [countryRiskEvolution, setCountryRiskEvolution] = useState(cloneDefaultCountryRiskEvolution);
+  const { parsed: eerrModel, source } = useEerrModel();
 
-  const [ticket, setTicket] = useState(TICKET_PROMEDIO);
-  const [volumeIndex, setVolumeIndex] = useState(VOLUME_INDEX_DEFAULT);
+  const excelSchedule = eerrModel.cashFlowSchedule;
+  const excelTcDefault =
+    excelSchedule?.exchangeRates[1] ?? DEFAULT_EXCHANGE_RATE;
+
+  const [exchangeRateOverride, setExchangeRateOverride] = useState<number | null>(null);
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
+  const [loanRatePct, setLoanRatePct] = useState(DEFAULT_LOAN_RATE_ANNUAL * 100);
+
+  const equityUsd = EQUITY_INVESTMENT_USD;
+  const totalUsd = FINANCING_TOTAL_USD;
+  const exchangeRate = exchangeRateOverride ?? excelTcDefault;
 
   const loanPrincipal = loanPrincipalFromStructure(totalUsd, equityUsd);
   const loanRate = loanRatePct / 100;
 
-  const waccInputsEffective = useMemo(
-    (): WaccValuationInputs => ({
-      ...waccInputs,
-      projectDebtToValue: totalUsd > 0 ? loanPrincipal / totalUsd : 0,
-    }),
-    [waccInputs, loanPrincipal, totalUsd],
-  );
+  const kwaccScheduleFull = useMemo((): number[] => {
+    if (eerrModel.kwaccSchedule && eerrModel.kwaccSchedule.length > 0) {
+      return eerrModel.kwaccSchedule;
+    }
+    return [...BASE_KWACC_SCHEDULE];
+  }, [eerrModel.kwaccSchedule]);
 
-  const kwaccSchedule = useMemo(
-    () => buildKwaccScheduleFromWaccInputs(waccInputsEffective, undefined, countryRiskEvolution),
-    [waccInputsEffective, countryRiskEvolution],
-  );
+  const excelDrivesInvestment = excelSchedule != null;
 
   const kwaccForInvestorDiscount = useMemo(
-    () => kwaccSchedule.slice(1, kwaccSchedule.length),
-    [kwaccSchedule],
+    () => kwaccForInvestorYears(kwaccScheduleFull),
+    [kwaccScheduleFull],
   );
 
-  const baseYear1Rows = useMemo(
-    () => eerrModel.years[0]?.rows ?? [],
-    [eerrModel],
-  );
-  const baseAnnualCovers = useMemo(
-    () => extractBaseAnnualCovers(baseYear1Rows),
-    [baseYear1Rows],
-  );
-
-  const coversScale = useMemo(
-    () => coversScaleFromVolumeIndex(volumeIndex),
-    [volumeIndex],
+  const year1Kpis = useMemo(
+    () => extractYearKpisFromRows(eerrModel.years[0]?.rows ?? []),
+    [eerrModel.years],
   );
 
   const totalCovers10y = useMemo(
-    () => totalHorizonCovers(eerrModel.years, coversScale),
-    [eerrModel.years, coversScale],
-  );
-
-  const annualCoversYear1 = useMemo(
-    () => Math.round(baseAnnualCovers * coversScale),
-    [baseAnnualCovers, coversScale],
+    () => totalHorizonCovers(eerrModel.years),
+    [eerrModel.years],
   );
 
   const businessFlows = useMemo(
     () =>
       buildBusinessFlowsFromEerr(eerrModel.years, {
-        ticket,
-        coversScale,
         exchangeRate,
+        cashFlowSchedule: excelSchedule,
       }),
-    [eerrModel.years, ticket, coversScale, exchangeRate],
+    [eerrModel.years, exchangeRate, excelSchedule],
   );
 
-  const simY1 = useMemo(
-    () => businessFlows[0],
-    [businessFlows],
-  );
+  const flowY1 = useMemo(() => businessFlows[0], [businessFlows]);
 
   const investmentParams: InvestmentModelParams = useMemo(
     () => ({
       equityUsd,
       totalInvestmentUsd: totalUsd,
       loanRateAnnual: loanRate,
-      kwaccInitial: kwaccForInvestorDiscount[0] ?? kwaccSchedule[0] ?? 0,
+      kwaccInitial: kwaccForInvestorDiscount[0] ?? kwaccScheduleFull[0] ?? 0,
       kwaccFinal:
         kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ??
-        kwaccSchedule[kwaccSchedule.length - 1] ??
+        kwaccScheduleFull[kwaccScheduleFull.length - 1] ??
         0,
       kwaccSchedule: kwaccForInvestorDiscount,
+      kwaccScheduleFull: kwaccScheduleFull,
     }),
-    [equityUsd, totalUsd, loanRate, kwaccForInvestorDiscount, kwaccSchedule],
+    [equityUsd, totalUsd, loanRate, kwaccForInvestorDiscount, kwaccScheduleFull],
   );
 
   const cashflow = useMemo(
@@ -196,125 +128,113 @@ export default function InvestmentTab() {
     [investmentParams, businessFlows],
   );
 
-  const projectValuation = useMemo(
-    () =>
-      buildProjectValuation({
-        equityInvestmentUsd: equityUsd,
-        exchangeRate,
-        waccInputs: waccInputsEffective,
-        businessFlows,
-        countryRiskEvolution,
-      }),
-    [equityUsd, exchangeRate, waccInputsEffective, businessFlows, countryRiskEvolution],
-  );
-
   const chartSeries = useMemo(
     () =>
       buildScenarioChartSeries(
         eerrModel.years,
         businessFlows,
-        cashflow.equityCashFlows,
-        coversScale,
+        cashflow.investorDividendsUsd,
       ),
-    [eerrModel.years, businessFlows, cashflow.equityCashFlows, coversScale],
+    [eerrModel.years, businessFlows, cashflow.investorDividendsUsd],
   );
 
   const totals10y = useMemo(() => {
     const nopat = businessFlows.reduce((sum, row) => sum + row.nopatUsd, 0);
-    const dividends = cashflow.years.reduce((sum, row) => sum + row.equityFfl, 0);
+    const dividends = cashflow.investorDividendsUsd.reduce((sum, value) => sum + value, 0);
     return { nopat, dividends };
-  }, [businessFlows, cashflow.years]);
+  }, [businessFlows, cashflow.investorDividendsUsd]);
 
-  const handleResetCountryRiskEvolution = () => {
-    setCountryRiskEvolution(cloneDefaultCountryRiskEvolution());
-  };
+  const fflFromExcel = businessFlows.some((flow) => flow.fflFromExcel);
 
   const handleReset = () => {
-    setExchangeRate(DEFAULT_EXCHANGE_RATE);
+    setExchangeRateOverride(null);
     setDisplayCurrency("usd");
-    setEquityUsd(EQUITY_INVESTMENT_USD);
-    setTotalUsd(TOTAL_INVESTMENT_USD);
     setLoanRatePct(DEFAULT_LOAN_RATE_ANNUAL * 100);
-    setWaccInputs(DEFAULT_WACC_INPUTS);
-    setCountryRiskEvolution(cloneDefaultCountryRiskEvolution());
-    setTicket(TICKET_PROMEDIO);
-    setVolumeIndex(VOLUME_INDEX_DEFAULT);
   };
 
-  const handleCountryRiskEvolutionChange = (yearIndex: number, value: number) => {
-    setCountryRiskEvolution((prev) => {
-      const next = [...prev];
-      next[yearIndex] = value;
-      return next;
-    });
-  };
+  const modelSourceLabel =
+    source === "import"
+      ? eerrModel.sourceFileName
+      : source === "bundled"
+        ? "ortiz-cashflow.xlsx (repo)"
+        : "modelo embebido (fallback)";
 
   return (
     <div className="space-y-6">
       <InvestmentSection
         equityUsd={equityUsd}
-        totalUsd={totalUsd}
         loanPrincipal={loanPrincipal}
         loanRatePct={loanRatePct}
       />
 
       <SectionCard
-        title="Simulador de escenarios"
-        subtitle="Horizonte 10 años · mismo factor de volumen en cada año EERR"
+        title="Inversión · datos del Excel"
+        subtitle={`${modelSourceLabel} · EERR (P&L) + hoja Cash Flow (NOPAT, FFL, Kwacc)`}
         tone="cashflow"
         className="rounded-2xl ring-1 ring-stone-200/60"
       >
         <div className="border-b border-stone-100 bg-stone-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-stone-500">
-              El volumen escala cubiertos, ventas, NOPAT y dividendos en Años 1–10 (EERR base intacto)
+              Ventas, EBITDA y resultado neto desde filas EERR · NOPAT y FFL operativo desde Cash
+              Flow cuando el archivo los incluye
             </p>
-            <button
-              type="button"
-              onClick={handleReset}
-              className="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50"
-            >
-              Restablecer valores originales
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <EerrExcelActions />
+              <button
+                type="button"
+                onClick={handleReset}
+                className="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50"
+              >
+                Restablecer parámetros de inversión
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="grid gap-6 p-5 xl:grid-cols-[minmax(280px,320px)_minmax(280px,320px)_1fr]">
           <div className="space-y-4 rounded-xl border border-stone-200/80 bg-gradient-to-br from-white to-stone-50 p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
-              Operación · 10 años
+              Operación · 10 años (Excel)
             </p>
-            <SliderRow
-              label="Índice de volumen"
-              helper={`×${coversScale.toFixed(2)} sobre cubiertos base de cada año · total 10a: ${formatCovers(totalCovers10y)} (A1 ref.: ${formatCovers(annualCoversYear1)})`}
-              value={volumeIndex}
-              min={VOLUME_INDEX_MIN}
-              max={VOLUME_INDEX_MAX}
-              step={VOLUME_INDEX_STEP}
-              display={`${volumeIndex}%`}
-              onChange={setVolumeIndex}
-            />
-            <SliderRow
-              label="Ticket promedio"
-              helper="Aplica a todos los años del horizonte"
-              value={ticket}
-              min={TICKET_MIN}
-              max={TICKET_MAX}
-              step={TICKET_STEP}
-              display={formatCurrency(ticket)}
-              onChange={setTicket}
-            />
+            <div className="space-y-3 text-sm text-stone-700">
+              <p>
+                Cubiertos Año 1:{" "}
+                <span className="font-semibold tabular-nums text-violet-900">
+                  {formatCovers(year1Kpis.annualCovers)}
+                </span>
+              </p>
+              <p>
+                Cubiertos acum. 10a:{" "}
+                <span className="font-semibold tabular-nums text-violet-900">
+                  {formatCovers(totalCovers10y)}
+                </span>
+              </p>
+              <p className="text-[11px] leading-relaxed text-stone-500">
+                EBITDA Año 1:{" "}
+                <span className="font-medium tabular-nums text-stone-700">
+                  {compactMoney(year1Kpis.ebitda, displayCurrency, exchangeRate)}
+                </span>
+                {excelDrivesInvestment ? (
+                  <span className="mt-1 block">NOPAT y FFL: hoja Cash Flow del Excel</span>
+                ) : (
+                  <span className="mt-1 block">
+                    Sin hoja Cash Flow: NOPAT = resultado neto EERR ÷ TC
+                  </span>
+                )}
+              </p>
+            </div>
             <div className="grid gap-3 border-t border-stone-100 pt-4 sm:grid-cols-2">
               <KpiCard
                 label="NOPAT acum. 10a"
                 value={compactFromUsd(totals10y.nopat, displayCurrency, exchangeRate)}
-                hint={`Año 1: ${compactFromUsd(simY1?.nopatUsd ?? 0, displayCurrency, exchangeRate)}`}
+                hint={`Año 1: ${compactFromUsd(flowY1?.nopatUsd ?? 0, displayCurrency, exchangeRate)}`}
                 tone="emerald"
               />
               <KpiCard
                 label="Dividendos acum. 10a"
                 value={compactFromUsd(totals10y.dividends, displayCurrency, exchangeRate)}
-                hint={`Año 1: ${compactFromUsd(cashflow.years[0]?.equityFfl ?? 0, displayCurrency, exchangeRate)}`}
+                hint={`Año 1: ${compactFromUsd(cashflow.investorDividendsUsd[0] ?? 0, displayCurrency, exchangeRate)}`}
                 tone="violet"
               />
             </div>
@@ -322,38 +242,20 @@ export default function InvestmentTab() {
 
           <div className="space-y-4 rounded-xl border border-stone-200/80 bg-white p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
-              Capital e inversión (USD)
+              Parámetros
             </p>
             <ParamField
               label="TC (ARS / USD)"
-              helper="Convierte resultados EERR a USD en cash flow"
+              helper={
+                excelDrivesInvestment
+                  ? `Default Excel: ${excelTcDefault.toLocaleString("es-AR")}`
+                  : "Convierte resultados EERR a USD en cash flow"
+              }
               value={exchangeRate}
-              onChange={setExchangeRate}
+              onChange={setExchangeRateOverride}
               format={(v) => String(v)}
               parse={(raw) => {
                 const n = Number(raw.replace(/\./g, "").replace(",", "."));
-                return Number.isFinite(n) && n > 0 ? n : null;
-              }}
-            />
-            <ParamField
-              label="Equity inversores (Año 0)"
-              helper="Desembolso equity — como Excel (-431.000)"
-              value={equityUsd}
-              onChange={setEquityUsd}
-              format={(v) => String(v)}
-              parse={(raw) => {
-                const n = Number(raw.replace(/\D/g, ""));
-                return Number.isFinite(n) && n > 0 ? n : null;
-              }}
-            />
-            <ParamField
-              label="Inversión total proyecto"
-              helper="Equity + préstamo de protección"
-              value={totalUsd}
-              onChange={setTotalUsd}
-              format={(v) => String(v)}
-              parse={(raw) => {
-                const n = Number(raw.replace(/\D/g, ""));
                 return Number.isFinite(n) && n > 0 ? n : null;
               }}
             />
@@ -367,56 +269,13 @@ export default function InvestmentTab() {
                 return Number.isFinite(n) && n >= 0 ? n : null;
               }}
             />
-            <div className="rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-xs text-stone-600">
-              <p>
-                Kwacc Año 1:{" "}
-                <span className="font-semibold tabular-nums text-stone-900">
-                  {formatPercent(kwaccForInvestorDiscount[0] ?? 0, 2)}
-                </span>
-                {" · "}
-                maduro:{" "}
-                <span className="font-semibold tabular-nums text-stone-900">
-                  {formatPercent(
-                    kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ?? 0,
-                    2,
-                  )}
-                </span>
-              </p>
-              <p className="mt-1 text-[11px] text-stone-500">
-                Calculado en Valuación por WACC (inputs editables abajo).
-              </p>
-            </div>
-            <div className="rounded-lg border border-amber-100 bg-amber-50/80 px-3 py-2 text-xs text-stone-600">
-              <p>
-                Préstamo:{" "}
-                <span className="font-semibold tabular-nums text-stone-900">
-                  {compactFromUsd(loanPrincipal, displayCurrency, exchangeRate)}
-                </span>{" "}
-                ({formatPercent(loanPrincipal / totalUsd)} del proyecto)
-              </p>
-              <p className="mt-1 text-[11px] text-stone-500">
-                Protege el equity: la diferencia entre inversión total y aporte de inversores.
-              </p>
-            </div>
           </div>
 
           <div className="space-y-4">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
               Retorno al equity (10 años)
             </p>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <KpiCard
-                label="VAN"
-                value={compactFromUsd(cashflow.npv, displayCurrency, exchangeRate)}
-                hint="Flujo neto al equity descontado"
-                tone="violet"
-              />
-              <KpiCard
-                label="TIR"
-                value={cashflow.irr !== null ? formatPercent(cashflow.irr) : "—"}
-                hint="Sobre flujo neto al equity"
-                tone="emerald"
-              />
+            <div className="grid gap-4 sm:grid-cols-1 lg:max-w-xs">
               <KpiCard
                 label="Payback"
                 value={
@@ -424,7 +283,13 @@ export default function InvestmentTab() {
                     ? `${cashflow.paybackYears.toFixed(1)} años`
                     : "—"
                 }
-                hint="Recuperación del equity"
+                hint={
+                  cashflow.paybackYears !== null
+                    ? cashflow.equityReleaseYear !== null
+                      ? `Payback ~${cashflow.paybackYears.toFixed(1)}a · liberación operadores Año ${cashflow.equityReleaseYear}`
+                      : `${cashflow.paybackYears.toFixed(1)} años`
+                    : "Recuperación del equity"
+                }
                 tone="stone"
               />
             </div>
@@ -449,7 +314,18 @@ export default function InvestmentTab() {
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/50 px-5 py-4">
           <p className="text-xs text-stone-500">
-            TC {exchangeRate.toLocaleString("es-AR")} ARS/USD · mismo criterio que pestaña EERR
+            TC {exchangeRate.toLocaleString("es-AR")} ARS/USD · Ventas y EBITDA en ARS (EERR)
+            {fflFromExcel ? (
+              <> · NOPAT y FFL operativo desde hoja Cash Flow (Excel)</>
+            ) : (
+              <>
+                {" "}
+                ·{" "}
+                <span className="font-medium text-amber-800">
+                  FFL estimado — reimportá el Excel para alinear al Cash Flow
+                </span>
+              </>
+            )}
           </p>
           <div className="flex rounded-full border border-stone-200 bg-white p-0.5 shadow-sm">
             {(["ars", "usd"] as const).map((option) => (
@@ -473,7 +349,7 @@ export default function InvestmentTab() {
             <thead>
               <tr className="border-b border-stone-200 text-left text-[10px] font-semibold uppercase tracking-wider text-stone-500">
                 <th className="pb-3 pr-3">Concepto</th>
-                <th className="pb-3 pr-2 text-right">Año 0</th>
+                <th className="pb-3 px-2 text-right">Año 0</th>
                 {cashflow.years.map((row) => (
                   <th key={`head-${row.year}`} className="pb-3 px-2 text-right">
                     Año {row.year}
@@ -484,7 +360,10 @@ export default function InvestmentTab() {
             <tbody>
               <CashflowRow
                 label="Inversión equity"
-                values={[-equityUsd, ...cashflow.years.map(() => 0)]}
+                values={withYearZero(
+                  -equityUsd,
+                  cashflow.years.map(() => 0),
+                )}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
@@ -492,22 +371,22 @@ export default function InvestmentTab() {
               />
               <CashflowRow
                 label="Ventas"
-                values={[0, ...cashflow.years.map((row) => row.ventasArs)]}
+                values={withYearZero(0, cashflow.years.map((row) => row.ventasArs))}
                 valueKind="ars"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
               />
               <CashflowRow
                 label="EBITDA"
-                values={[0, ...cashflow.years.map((row) => row.ebitdaArs)]}
+                values={withYearZero(0, cashflow.years.map((row) => row.ebitdaArs))}
                 valueKind="ars"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
               />
               <CashflowRow
-                label="NOPAT (= Resultado neto EERR)"
-                values={[0, ...cashflow.years.map((row) => row.netResultArs)]}
-                valueKind="ars"
+                label="NOPAT (USD · Cash Flow / EERR÷TC)"
+                values={withYearZero(0, cashflow.years.map((row) => row.nopatUsd))}
+                valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
                 netResult
@@ -516,7 +395,7 @@ export default function InvestmentTab() {
                 <CashflowRow
                   key={line.id}
                   label={line.label}
-                  values={[0, ...bridgeValuesForLine(cashflow.years, line.id)]}
+                  values={bridgeValuesForLine(cashflow.years, line.id)}
                   valueKind="usd"
                   currency={displayCurrency}
                   exchangeRate={exchangeRate}
@@ -524,16 +403,8 @@ export default function InvestmentTab() {
                 />
               ))}
               <CashflowRow
-                label="Retención en el negocio (subtotal)"
-                values={[0, ...cashflow.years.map((row) => -row.bridgeTotalUsd)]}
-                valueKind="usd"
-                currency={displayCurrency}
-                exchangeRate={exchangeRate}
-                bridgeSubtotal
-              />
-              <CashflowRow
                 label="FFL operativo"
-                values={[0, ...cashflow.years.map((row) => row.operationalFflUsd)]}
+                values={withYearZero(0, cashflow.years.map((row) => row.operationalFflUsd))}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
@@ -541,7 +412,7 @@ export default function InvestmentTab() {
               />
               <CashflowRow
                 label="Saldo préstamo (inicio)"
-                values={[loanPrincipal, ...cashflow.years.map((row) => row.balanceStart)]}
+                values={withYearZero(0, cashflow.years.map((row) => row.balanceStart))}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
@@ -549,7 +420,7 @@ export default function InvestmentTab() {
               />
               <CashflowRow
                 label={`Interés préstamo (${Math.round(loanRatePct)}%)`}
-                values={[0, ...cashflow.years.map((row) => -row.interestPaid)]}
+                values={withYearZero(0, cashflow.years.map((row) => -row.interestPaid))}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
@@ -557,57 +428,79 @@ export default function InvestmentTab() {
               />
               <CashflowRow
                 label="Amortización capital"
-                values={[0, ...cashflow.years.map((row) => -row.principalPaid)]}
+                values={withYearZero(0, cashflow.years.map((row) => -row.principalPaid))}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
                 debt
               />
               <CashflowRow
-                label="Dividendos (FFL to Equity)"
-                values={cashflow.equityCashFlows}
+                label="Dividendos disponibles (FFL to equity)"
+                values={withYearZero(0, cashflow.years.map((row) => row.equityFfl))}
+                valueKind="usd"
+                currency={displayCurrency}
+                exchangeRate={exchangeRate}
+              />
+              <CashflowRow
+                label={`Liberación equity operadores (${Math.round(OPERATOR_EQUITY_SHARE * 100)}% · bullet payback)`}
+                values={withYearZero(0, cashflow.operatorDividendsUsd)}
+                valueKind="usd"
+                currency={displayCurrency}
+                exchangeRate={exchangeRate}
+                bridge
+              />
+              <CashflowRow
+                label="Dividendos inversores (neto)"
+                values={withYearZero(0, cashflow.investorDividendsUsd)}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
                 total
               />
               <CashflowRow
-                label="Valor presente (equity)"
-                values={[
-                  cashflow.equityCashFlows[0],
-                  ...cashflow.years.map((row) => row.presentValue),
-                ]}
+                label={`TIR equity · flujo nominal (−${Math.round(equityUsd / 1000)}k Año 0 + dividendos netos)`}
+                resultValue={
+                  cashflow.irr !== null ? formatPercent(cashflow.irr) : "—"
+                }
+                values={cashflow.equityMetricsFlows}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
                 muted
               />
+              <CashflowRow
+                label="VAN equity · flujos descontados (Kwacc)"
+                resultValue={compactFromUsd(cashflow.npv, displayCurrency, exchangeRate)}
+                values={cashflow.vanPresentValues}
+                valueKind="usd"
+                currency={displayCurrency}
+                exchangeRate={exchangeRate}
+                highlight
+              />
             </tbody>
           </table>
           <p className="mt-4 text-[11px] leading-relaxed text-stone-400">
-            <strong className="font-medium text-stone-600">NOPAT</strong> = Resultado neto del EERR
-            (aguinaldo e impuestos ya están en el estado de resultados).
-            <strong className="font-medium text-stone-600"> Δ NOF</strong> = variación anual del stock
-            (Caja {WORKING_CAPITAL_DAYS.caja}d + Clientes {WORKING_CAPITAL_DAYS.clientes}d − Proveedores{" "}
-            {WORKING_CAPITAL_DAYS.proveedores}d) sobre ventas y costos variables anuales del EERR.
-            <strong className="font-medium text-stone-600"> Dividendos</strong> = FFL operativo neto de
-            servicio de deuda (interés primero, luego capital).
+            <strong className="font-medium text-stone-600">Reserva despidos</strong> = 1% de
+            RRHH del EERR (param «Fondo Despidos») · aplica desde{" "}
+            <strong className="font-medium text-stone-600">Año 1</strong> en el modelo.{" "}
+            <strong className="font-medium text-stone-600">FFL operativo</strong>
+            {fflFromExcel
+              ? " = fila FFL del Excel (coincide con el archivo; el resto del puente NOPAT→FFL está implícito en el Excel)."
+              : " = NOPAT − reserva despidos (estimado si no hay Excel)."}
+            <strong className="font-medium text-stone-600"> Dividendos disponibles</strong> = FFL operativo neto
+            de servicio de deuda (interés primero, luego capital).{" "}
+            <strong className="font-medium text-stone-600">Liberación operadores</strong> = bullet del{" "}
+            {Math.round(OPERATOR_EQUITY_SHARE * 100)}% de equity al alcanzar payback del inversor; desde
+            ese año el reparto es 70% inversor / 30% operadores sobre el excedente.{" "}
+            <strong className="font-medium text-stone-600">VAN/TIR</strong> solo sobre{" "}
+            <strong className="font-medium text-stone-600">equity inversores</strong>: aporte{" "}
+            <strong className="font-medium text-stone-600">−{Math.round(equityUsd / 1000)}k</strong>{" "}
+            en <strong className="font-medium text-stone-600">Año 0</strong> + dividendos netos
+            (Años 1–10). Año 1 VAN = solo VP del dividendo; Año 0 VAN = −equity sin descontar.
             <span className="mt-1 block text-stone-500">*no contempla IIGG</span>
           </p>
         </div>
       </SectionCard>
-
-      <WaccValuationSection
-        waccInputs={waccInputsEffective}
-        onWaccInputsChange={(patch) => setWaccInputs((prev) => ({ ...prev, ...patch }))}
-        countryRiskEvolution={countryRiskEvolution}
-        onCountryRiskEvolutionChange={handleCountryRiskEvolutionChange}
-        onResetCountryRiskEvolution={handleResetCountryRiskEvolution}
-        onReset={handleReset}
-        valuation={projectValuation}
-        displayCurrency={displayCurrency}
-        exchangeRate={exchangeRate}
-      />
     </div>
   );
 }
@@ -618,6 +511,8 @@ type CashflowRowProps = {
   valueKind: "ars" | "usd";
   currency: DisplayCurrency;
   exchangeRate: number;
+  /** TIR / VAN u otro total mostrado junto al concepto. */
+  resultValue?: string;
   emphasis?: boolean;
   highlight?: boolean;
   debt?: boolean;
@@ -625,7 +520,6 @@ type CashflowRowProps = {
   muted?: boolean;
   netResult?: boolean;
   bridge?: boolean;
-  bridgeSubtotal?: boolean;
 };
 
 function CashflowRow({
@@ -634,6 +528,7 @@ function CashflowRow({
   valueKind,
   currency,
   exchangeRate,
+  resultValue,
   emphasis,
   highlight,
   debt,
@@ -641,7 +536,6 @@ function CashflowRow({
   muted,
   netResult,
   bridge,
-  bridgeSubtotal,
 }: CashflowRowProps) {
   const rowClass = total
     ? "bg-slate-800 font-bold text-white"
@@ -651,15 +545,13 @@ function CashflowRow({
         ? "bg-violet-50/80 font-semibold text-violet-950"
         : debt
           ? "bg-amber-50/50 text-amber-950"
-          : bridgeSubtotal
-            ? "border-y border-stone-200 bg-stone-50 text-[11px] font-semibold text-stone-600"
-            : bridge
-              ? "text-[11px] text-stone-500"
-              : emphasis
-                ? "bg-stone-100 font-semibold"
-                : muted
-                  ? "text-stone-500"
-                  : "border-b border-stone-100";
+          : bridge
+            ? "text-[11px] text-stone-500"
+            : emphasis
+              ? "bg-stone-100 font-semibold"
+              : muted
+                ? "text-stone-500"
+                : "border-b border-stone-100";
 
   const formatCell = (value: number) =>
     valueKind === "ars"
@@ -668,7 +560,14 @@ function CashflowRow({
 
   return (
     <tr className={rowClass}>
-      <td className="py-2.5 pr-3">{label}</td>
+      <td className="py-2.5 pr-3">
+        <span>{label}</span>
+        {resultValue ? (
+          <span className="ml-2 inline-block rounded-md bg-white/80 px-2 py-0.5 text-sm font-bold tabular-nums ring-1 ring-stone-200/80">
+            {resultValue}
+          </span>
+        ) : null}
+      </td>
       {values.map((value, index) => (
         <td key={`${label}-${index}`} className="px-2 py-2.5 text-right tabular-nums">
           {formatCell(value)}

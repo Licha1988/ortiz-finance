@@ -1,6 +1,30 @@
-/** Estructura de capital — valores en USD (modelo Excel Diego). */
-export const TOTAL_INVESTMENT_USD = 563_000;
-export const EQUITY_INVESTMENT_USD = 431_000;
+/** Costo total del proyecto = inversión + capital de trabajo (USD). */
+export const PROJECT_COST_USD = 560_000;
+
+/** Inversión proyecto (sin capital de trabajo). */
+export const PROJECT_CAPEX_USD = 530_000;
+
+/** Capital de trabajo Septiembre — se destina al stock NOF al arrancar operaciones. */
+export const PROJECT_WORKING_CAPITAL_USD = 30_000;
+
+/** Stock NOF inicial (mismo monto que cap. de trabajo de la inversión). */
+export const INITIAL_NOF_STOCK_USD = PROJECT_WORKING_CAPITAL_USD;
+
+/** Equity de inversores (desembolso Año 1). */
+export const EQUITY_INVESTMENT_USD = 450_000;
+
+/** Al alcanzar payback del equity inversor, se libera este % a operadores. */
+export const OPERATOR_EQUITY_SHARE = 0.3;
+
+/** Préstamo de protección — no se abre a equity. */
+export const LOAN_INVESTMENT_USD = 110_000;
+
+/** Fuentes de fondos = equity + préstamo (cash flow y servicio de deuda). */
+export const FINANCING_TOTAL_USD = EQUITY_INVESTMENT_USD + LOAN_INVESTMENT_USD;
+
+/** @deprecated Alias de PROJECT_COST_USD — desglose izquierdo. */
+export const TOTAL_INVESTMENT_USD = PROJECT_COST_USD;
+
 export const DEFAULT_LOAN_RATE_ANNUAL = 0.08;
 
 export function loanPrincipalFromStructure(
@@ -46,9 +70,10 @@ export const BASE_NOPAT_USD: readonly number[] = [
   256_261,
 ];
 
-/** Kwacc esperado por año (ratio 0–1). Año 0 = t=0 para descuento. */
+/** Kwacc Año 0–10 — calibrado a hoja Cash Flow del Excel Diego. */
 export const BASE_KWACC_SCHEDULE: readonly number[] = [
-  0.2281, 0.2216, 0.2151, 0.2086, 0.2021, 0.1956, 0.1891, 0.1826, 0.1761, 0.1696, 0.1631,
+  0.22808944, 0.17855344, 0.16309744, 0.16309744, 0.16309744,
+  0.16309744, 0.16309744, 0.16309744, 0.16309744, 0.16309744, 0.16309744,
 ];
 
 export const DEFAULT_KWACC_INITIAL = BASE_KWACC_SCHEDULE[0];
@@ -62,14 +87,16 @@ export type InvestmentLine = {
 };
 
 export const PROJECT_INVESTMENT_LINES: InvestmentLine[] = [
-  { id: "total-inversion", label: "Total inversión proyecto", amount: 338_799 },
-  { id: "capital-trabajo", label: "Capital de trabajo Agosto", amount: 25_000 },
-  { id: "contingencia", label: "Contingencia", amount: 30_000 },
-  { id: "fondo-comercio", label: "Fondo de comercio", amount: 170_000 },
+  { id: "total-inversion", label: "Total inversión proyecto", amount: PROJECT_CAPEX_USD },
+  {
+    id: "capital-trabajo",
+    label: "Capital de trabajo Septiembre",
+    amount: PROJECT_WORKING_CAPITAL_USD,
+  },
 ];
 
 export const PROJECT_INVESTMENT_TOTAL: InvestmentLine = {
   id: "consolidado",
   label: "Consolidado proyecto",
-  amount: TOTAL_INVESTMENT_USD,
+  amount: PROJECT_COST_USD,
 };

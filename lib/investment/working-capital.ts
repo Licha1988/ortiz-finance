@@ -24,7 +24,7 @@ export function nofStockUsd(
 
 /**
  * Δ NOF anual: variación del stock respecto al cierre del año anterior.
- * Año 1 compara contra stock inicial 0 (pre-apertura).
+ * Año 1 compara contra el stock inicial (cap. de trabajo de la inversión).
  */
 export function deltaNofUsd(
   ventasUsd: number,

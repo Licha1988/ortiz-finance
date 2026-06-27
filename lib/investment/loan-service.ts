@@ -48,7 +48,18 @@ export function computeLoanServiceSchedule(
   });
 }
 
+/** Flujo neto al equity por año operativo (Año 1…10). Inversión en Año 1. */
 export function equityCashFlows(
+  equityInvestment: number,
+  loanSchedule: LoanServiceYear[],
+): number[] {
+  return loanSchedule.map((row, index) =>
+    index === 0 ? row.equityFfl - equityInvestment : row.equityFfl,
+  );
+}
+
+/** Año 0: −equity · Años 1…10: FFL to equity post-deuda (100% al inversor). */
+export function buildEquityInvestorFlowsYearZero(
   equityInvestment: number,
   loanSchedule: LoanServiceYear[],
 ): number[] {

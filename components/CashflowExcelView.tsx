@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import EerrStatementTable from "@/components/EerrStatementTable";
+import EerrExcelActions from "@/components/EerrExcelActions";
 import { isBundledEerrModel, useEerrModel } from "@/components/EerrModelProvider";
 import EmptyState from "@/components/ui/EmptyState";
 import KpiCard from "@/components/ui/KpiCard";
@@ -16,6 +17,7 @@ import {
 import { isFullOperationYear } from "@/lib/cashflow/eerr-years";
 import EerrCurrencyBar from "@/components/EerrCurrencyBar";
 import { BUNDLED_EERR_SOURCE_NAME } from "@/lib/cashflow/load-eerr-model";
+import { isEerrImportAllowed } from "@/lib/cashflow/eerr-model-admin";
 
 export default function CashflowExcelView() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -102,6 +104,7 @@ export default function CashflowExcelView() {
     return param?.displayValue ?? "—";
   }, [parsed.params]);
 
+  const allowImport = isEerrImportAllowed();
   const isBundledModel = isBundledEerrModel(source, parsed);
   const yearLabel = activeYear?.label ?? "Año 1";
   const error = importError ?? (source === "fallback" ? loadError : null);
@@ -131,13 +134,15 @@ export default function CashflowExcelView() {
         tone="cashflow"
         className="rounded-2xl ring-1 ring-stone-200/60"
       >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          className="hidden"
-          onChange={handleFileChange}
-        />
+        {allowImport ? (
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+        ) : null}
 
         {loading && (
           <div className="mx-5 mb-5 mt-4">
@@ -197,34 +202,26 @@ export default function CashflowExcelView() {
                   </span>
                 ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void restoreBundled();
-                    setActiveYearId("year1");
-                    setImportError(null);
-                  }}
-                  className="rounded-full border border-stone-200 bg-white px-4 py-2 text-xs font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50"
-                >
-                  Restaurar repo
-                </button>
-                <button
-                  type="button"
-                  onClick={() => inputRef.current?.click()}
-                  className="rounded-full bg-violet-800 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-900"
-                >
-                  Importar Excel
-                </button>
-              </div>
+              <EerrExcelActions
+                onImportClick={allowImport ? () => inputRef.current?.click() : undefined}
+                onRestoreBundled={
+                  allowImport
+                    ? () => {
+                        void restoreBundled();
+                        setActiveYearId("year1");
+                        setImportError(null);
+                      }
+                    : undefined
+                }
+              />
             </div>
 
             <div
-              onDragEnter={() => setDragActive(true)}
-              onDragLeave={() => setDragActive(false)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={handleDrop}
-              className={`${dragActive ? "ring-2 ring-violet-400 ring-offset-2" : ""}`}
+              onDragEnter={allowImport ? () => setDragActive(true) : undefined}
+              onDragLeave={allowImport ? () => setDragActive(false) : undefined}
+              onDragOver={allowImport ? (event) => event.preventDefault() : undefined}
+              onDrop={allowImport ? handleDrop : undefined}
+              className={`${allowImport && dragActive ? "ring-2 ring-violet-400 ring-offset-2" : ""}`}
             >
               <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
                 <KpiCard

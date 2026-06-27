@@ -1,4 +1,5 @@
 import { DEFAULT_EERR_DATA } from "@/lib/cashflow/default-eerr";
+import { isEerrImportAllowed } from "@/lib/cashflow/eerr-model-admin";
 import { updateYearRows as mutateYearRows } from "@/lib/cashflow/eerr-model-mutate";
 import {
   clearEerrModelLocalStorage,
@@ -71,7 +72,7 @@ async function loadUploadedModel(): Promise<ParsedEerrExcel | null> {
 }
 
 async function loadInitialModel(): Promise<EerrModelSnapshot> {
-  const uploaded = await loadUploadedModel();
+  const uploaded = isEerrImportAllowed() ? await loadUploadedModel() : null;
   if (uploaded) {
     return {
       parsed: uploaded,
@@ -142,6 +143,10 @@ async function clearUploadedModel(): Promise<void> {
 }
 
 export async function replaceEerrFromFile(file: File): Promise<void> {
+  if (!isEerrImportAllowed()) {
+    throw new Error("La importación de Excel solo está disponible en desarrollo local.");
+  }
+
   if (!file.name.match(/\.xlsx?$/i)) {
     throw new Error("Subí un archivo Excel (.xlsx).");
   }

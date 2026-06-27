@@ -1,14 +1,24 @@
 /** Valor presente neto con tasa de descuento por período. */
-export function computeNpv(cashFlows: number[], discountRates: number[]): number {
+export function computeNpv(
+  cashFlows: number[],
+  discountRates: number[],
+  /** Período del primer flujo (1 = Año 1, sin Año 0). */
+  firstPeriod = 0,
+): number {
   return cashFlows.reduce((total, cashFlow, index) => {
     const rate = discountRates[index] ?? discountRates[discountRates.length - 1] ?? 0;
-    const discountFactor = Math.pow(1 + rate, index);
+    const period = firstPeriod + index;
+    const discountFactor = Math.pow(1 + rate, period);
     return total + cashFlow / discountFactor;
   }, 0);
 }
 
 /** TIR (IRR) — tasa que hace NPV = 0. Newton-Raphson sobre flujo completo. */
-export function computeIrr(cashFlows: number[], guess = 0.15): number | null {
+export function computeIrr(
+  cashFlows: number[],
+  guess = 0.15,
+  firstPeriod = 0,
+): number | null {
   if (cashFlows.length < 2) return null;
   if (!cashFlows.some((value) => value > 0) || !cashFlows.some((value) => value < 0)) {
     return null;
@@ -21,10 +31,11 @@ export function computeIrr(cashFlows: number[], guess = 0.15): number | null {
     let derivative = 0;
 
     for (let t = 0; t < cashFlows.length; t += 1) {
-      const factor = Math.pow(1 + rate, t);
+      const period = firstPeriod + t;
+      const factor = Math.pow(1 + rate, period);
       npv += cashFlows[t] / factor;
-      if (t > 0) {
-        derivative -= (t * cashFlows[t]) / Math.pow(1 + rate, t + 1);
+      if (period > 0) {
+        derivative -= (period * cashFlows[t]) / Math.pow(1 + rate, period + 1);
       }
     }
 
@@ -44,18 +55,22 @@ export function computeIrr(cashFlows: number[], guess = 0.15): number | null {
  * Payback simple en años (puede ser fraccionario).
  * Retorna null si no se recupera dentro del horizonte.
  */
-export function computePaybackYears(cashFlows: number[]): number | null {
-  if (cashFlows.length === 0 || cashFlows[0] >= 0) return null;
+export function computePaybackYears(
+  cashFlows: number[],
+  /** Período del primer flujo (1 = Año 1). */
+  firstPeriod = 0,
+): number | null {
+  if (cashFlows.length === 0) return null;
 
-  let cumulative = cashFlows[0];
-  for (let year = 1; year < cashFlows.length; year += 1) {
+  let cumulative = 0;
+  for (let index = 0; index < cashFlows.length; index += 1) {
     const previous = cumulative;
-    cumulative += cashFlows[year];
-    if (cumulative >= 0) {
+    cumulative += cashFlows[index];
+    if (cumulative >= 0 && previous < 0) {
       const shortfall = -previous;
-      const inflow = cashFlows[year];
-      if (inflow === 0) return year;
-      return year - 1 + shortfall / inflow;
+      const inflow = cashFlows[index];
+      if (inflow === 0) return firstPeriod + index;
+      return firstPeriod + index - 1 + shortfall / inflow;
     }
   }
 

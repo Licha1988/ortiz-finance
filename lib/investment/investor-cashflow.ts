@@ -4,14 +4,17 @@ import {
 } from "@/lib/investment/project-data";
 import type { BusinessYearFlow } from "@/lib/investment/eerr-operational-flows";
 import {
+  applyOperatorEquitySplit,
+  buildEquityMetricsFlows,
+} from "@/lib/investment/operator-equity";
+import {
+  buildEquityInvestorFlowsYearZero,
   computeLoanServiceSchedule,
-  equityCashFlows,
   type LoanServiceYear,
 } from "@/lib/investment/loan-service";
 import {
   buildKwaccSchedule,
   computeIrr,
-  computeNpv,
   computePaybackYears,
 } from "@/lib/investment/returns";
 
@@ -21,25 +24,57 @@ export type InvestmentModelParams = {
   loanRateAnnual: number;
   kwaccInitial: number;
   kwaccFinal: number;
-  /** Si se provee, reemplaza la interpolación lineal inicial→final. */
+  /** Kwacc Años 1–10 (fallback si no hay schedule completo). */
   kwaccSchedule?: number[];
+  /** Kwacc Año 0–10 desde Excel. */
+  kwaccScheduleFull?: number[];
 };
 
 export type InvestorCashflowYear = LoanServiceYear &
   BusinessYearFlow & {
-    presentValue: number;
+    presentValueUsd: number;
     kwacc: number;
+    investorDividendUsd: number;
+    operatorDividendUsd: number;
+    equityReleaseMilestone: boolean;
   };
 
 export type InvestorCashflowResult = {
   loanPrincipal: number;
   years: InvestorCashflowYear[];
-  equityCashFlows: number[];
+  /** Año 0: −equity · Años 1–10: dividendos netos (TIR). */
+  equityMetricsFlows: number[];
+  /** Año 0 + Años 1–10: flujos descontados (VAN por columna). */
+  vanPresentValues: number[];
+  investorDividendsUsd: number[];
+  operatorDividendsUsd: number[];
+  equityReleaseYear: number | null;
   discountRates: number[];
   npv: number;
   irr: number | null;
   paybackYears: number | null;
 };
+
+function resolveKwaccFullSchedule(
+  params: InvestmentModelParams,
+  horizon: number,
+): number[] {
+  if (params.kwaccScheduleFull && params.kwaccScheduleFull.length >= horizon + 1) {
+    return params.kwaccScheduleFull.slice(0, horizon + 1);
+  }
+  if (params.kwaccSchedule && params.kwaccSchedule.length > 0) {
+    return [params.kwaccInitial, ...params.kwaccSchedule.slice(0, horizon)];
+  }
+  return buildKwaccSchedule(horizon, params.kwaccInitial, params.kwaccFinal).slice(
+    0,
+    horizon + 1,
+  );
+}
+
+function presentValueAtPeriod(cashFlow: number, rate: number, period: number): number {
+  if (period <= 0) return cashFlow;
+  return cashFlow / Math.pow(1 + rate, period);
+}
 
 export function buildInvestorCashflow(
   params: InvestmentModelParams,
@@ -58,36 +93,56 @@ export function buildInvestorCashflow(
     operationalFfl,
   );
 
-  const equityFlows = equityCashFlows(params.equityUsd, loanSchedule);
+  const prePaybackCashFlows = buildEquityInvestorFlowsYearZero(
+    params.equityUsd,
+    loanSchedule,
+  );
+  const split = applyOperatorEquitySplit(params.equityUsd, loanSchedule);
+  const equityMetricsFlows = buildEquityMetricsFlows(
+    params.equityUsd,
+    split.investorDividendsUsd,
+  );
 
-  const kwaccByYear =
-    params.kwaccSchedule && params.kwaccSchedule.length > 0
-      ? params.kwaccSchedule.slice(0, horizon)
-      : buildKwaccSchedule(horizon, params.kwaccInitial, params.kwaccFinal).slice(0, horizon);
-  const discountRates = [0, ...kwaccByYear];
+  const kwaccFull = resolveKwaccFullSchedule(params, horizon);
+  const kwaccByYear = kwaccFull.slice(1, horizon + 1);
+
+  const vanPresentValues = equityMetricsFlows.map((cashFlow, index) =>
+    presentValueAtPeriod(
+      cashFlow,
+      kwaccFull[index] ?? kwaccFull[kwaccFull.length - 1] ?? 0,
+      index,
+    ),
+  );
+  const vanTotalUsd = vanPresentValues.reduce((sum, value) => sum + value, 0);
 
   const years: InvestorCashflowYear[] = loanSchedule.map((row, index) => {
     const business = businessFlows[index];
-    const period = index + 1;
     const kwacc = kwaccByYear[index] ?? params.kwaccFinal;
-    const discountFactor = Math.pow(1 + kwacc, period);
+    const investorDividend = split.investorDividendsUsd[index] ?? 0;
     return {
       ...business,
       ...row,
       repartijaUsd: row.equityFfl,
+      investorDividendUsd: investorDividend,
+      operatorDividendUsd: split.operatorDividendsUsd[index] ?? 0,
+      equityReleaseMilestone: split.paybackYearIndex === index,
       kwacc,
-      presentValue: row.equityFfl / discountFactor,
+      presentValueUsd: vanPresentValues[index + 1] ?? 0,
     };
   });
 
   return {
     loanPrincipal,
     years,
-    equityCashFlows: equityFlows,
-    discountRates,
-    npv: computeNpv(equityFlows, discountRates),
-    irr: computeIrr(equityFlows),
-    paybackYears: computePaybackYears(equityFlows),
+    equityMetricsFlows,
+    vanPresentValues,
+    investorDividendsUsd: split.investorDividendsUsd,
+    operatorDividendsUsd: split.operatorDividendsUsd,
+    equityReleaseYear: split.equityReleaseYear,
+    discountRates: kwaccByYear,
+    npv: vanTotalUsd,
+    irr: computeIrr(equityMetricsFlows, 0.15, 0),
+    paybackYears: computePaybackYears(prePaybackCashFlows, 0),
   };
 }
 

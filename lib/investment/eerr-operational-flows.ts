@@ -1,22 +1,19 @@
 import { EERR_HORIZON_YEARS, type EerrYearSlice } from "@/lib/cashflow/eerr-years";
+import { extractYearKpisFromRows } from "@/lib/cashflow/eerr-kpis";
 import { DEFAULT_EXCHANGE_RATE } from "@/lib/cashflow/exchange-rate";
-import {
-  computeAnnualScenarioKpis,
-  extractBaseAnnualCovers,
-} from "@/lib/cashflow/scenario-simulator";
+import type { ParsedCashFlowSchedule } from "@/lib/cashflow/parse-cashflow-excel";
 import { INVESTMENT_HORIZON_YEARS } from "@/lib/investment/project-data";
 import {
   buildCashflowBridge,
   type CashflowBridgeLine,
 } from "@/lib/investment/cashflow-bridge";
 
-/** Tasa anual Fondo Despidos (supuesto EERR). */
+/** Tasa anual Fondo Despidos — param EERR «Fondo Despidos 1,0%». */
 export const FONDO_DESPidos_RATE = 0.01;
 
-export type ScenarioDrivers = {
-  ticket: number;
-  coversScale: number;
+export type BusinessFlowInput = {
   exchangeRate: number;
+  cashFlowSchedule?: ParsedCashFlowSchedule;
 };
 
 export type BusinessYearFlow = {
@@ -25,61 +22,61 @@ export type BusinessYearFlow = {
   comprasArs: number;
   ebitdaArs: number;
   netResultArs: number;
-  /** NOPAT = Resultado neto (USD). */
   nopatUsd: number;
   netResultUsd: number;
   bridgeLines: CashflowBridgeLine[];
+  /** Reserva despidos (USD). */
   bridgeTotalUsd: number;
   operationalFflUsd: number;
-  nofStockUsd: number;
-  /** Dividendo repartible post deuda (= FFL to Equity / REPARTIJA). */
   repartijaUsd: number;
+  fflFromExcel: boolean;
+  reservaDespidosUsd: number;
 };
 
-export function simulateEerrYearKpis(
-  rows: EerrYearSlice["rows"],
-  drivers: Pick<ScenarioDrivers, "ticket" | "coversScale">,
-) {
-  const baseAnnualCovers = extractBaseAnnualCovers(rows);
-  return computeAnnualScenarioKpis(rows, {
-    ticket: drivers.ticket,
-    annualCovers: baseAnnualCovers * drivers.coversScale,
-  });
+function exchangeRateForYear(
+  yearIndex: number,
+  input: BusinessFlowInput,
+): number {
+  const fromSchedule = input.cashFlowSchedule?.exchangeRates[yearIndex + 1];
+  if (fromSchedule && fromSchedule > 0) return fromSchedule;
+  if (input.exchangeRate > 0) return input.exchangeRate;
+  return DEFAULT_EXCHANGE_RATE;
 }
 
 export function buildBusinessFlowsFromEerr(
   years: EerrYearSlice[],
-  drivers: ScenarioDrivers,
+  input: BusinessFlowInput,
 ): BusinessYearFlow[] {
   const horizon = Math.min(
     INVESTMENT_HORIZON_YEARS,
     EERR_HORIZON_YEARS,
     years.length,
   );
-  const exchangeRate = drivers.exchangeRate > 0 ? drivers.exchangeRate : DEFAULT_EXCHANGE_RATE;
 
-  let priorNofStockUsd = 0;
   const flows: BusinessYearFlow[] = [];
 
-  for (let index = 0; index < horizon; index++) {
+  for (let index = 0; index < horizon; index += 1) {
     const yearSlice = years[index];
-    const kpis = simulateEerrYearKpis(yearSlice.rows, drivers);
+    const kpis = extractYearKpisFromRows(yearSlice.rows);
+    const exchangeRate = exchangeRateForYear(index, input);
+
     const ventasArs = kpis.yearSales;
     const comprasArs = kpis.variableCosts;
     const netResultArs = kpis.netResult;
-    const nopatUsd = netResultArs / exchangeRate;
-    const ventasUsd = ventasArs / exchangeRate;
-    const comprasUsd = comprasArs / exchangeRate;
+    const excelNopat = input.cashFlowSchedule?.nopatUsd[index];
+    const nopatUsd =
+      excelNopat != null ? excelNopat : netResultArs / exchangeRate;
+
+    const reservaDespidosUsd = (kpis.rrhh * FONDO_DESPidos_RATE) / exchangeRate;
 
     const bridge = buildCashflowBridge({
       nopatUsd,
-      ventasUsd,
-      comprasUsd,
-      priorNofStockUsd,
-      reservaDespidosUsd: (kpis.rrhh * FONDO_DESPidos_RATE) / exchangeRate,
+      reservaDespidosUsd,
     });
 
-    priorNofStockUsd = bridge.endNofStockUsd;
+    const excelFfl = input.cashFlowSchedule?.operationalFflUsd[index];
+    const fflFromExcel = excelFfl != null;
+    const operationalFflUsd = fflFromExcel ? excelFfl : bridge.operationalFflUsd;
 
     flows.push({
       year: index + 1,
@@ -91,19 +88,12 @@ export function buildBusinessFlowsFromEerr(
       netResultUsd: nopatUsd,
       bridgeLines: bridge.lines,
       bridgeTotalUsd: bridge.bridgeTotalUsd,
-      operationalFflUsd: bridge.operationalFflUsd,
-      nofStockUsd: bridge.endNofStockUsd,
+      operationalFflUsd,
       repartijaUsd: 0,
+      fflFromExcel,
+      reservaDespidosUsd,
     });
   }
 
   return flows;
-}
-
-export function coversScaleFromAnnualCovers(
-  year1Rows: EerrYearSlice["rows"],
-  targetAnnualCovers: number,
-): number {
-  const base = extractBaseAnnualCovers(year1Rows);
-  return base > 0 ? targetAnnualCovers / base : 1;
 }

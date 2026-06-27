@@ -5,6 +5,7 @@ import {
 import { convertMonetaryValue } from "@/lib/cashflow/exchange-rate";
 import { compactCurrency, formatCovers, formatCurrency, formatPercent } from "@/lib/format";
 import { extendEerrHorizon } from "@/lib/cashflow/extend-eerr-horizon";
+import { parseCashFlowScheduleFromWorkbook, type ParsedCashFlowSchedule } from "@/lib/cashflow/parse-cashflow-excel";
 import {
   EERR_HORIZON_YEARS,
   EERR_YEAR_RANGES,
@@ -45,6 +46,10 @@ export type ParsedEerrExcel = {
   sheetName: string;
   years: EerrYearSlice[];
   params: EerrParam[];
+  /** Kwacc Año 0–10 desde hoja «Cash Flow» del Excel (ratio 0–1). */
+  kwaccSchedule?: number[];
+  /** Filas clave de la hoja «Cash Flow» (NOPAT, FFL, TC, Kwacc). */
+  cashFlowSchedule?: ParsedCashFlowSchedule;
   /** Compat: alias de `years[0].months`. */
   months: string[];
   /** Compat: alias de `years[0].rows`. */
@@ -276,12 +281,16 @@ export async function parseEerrExcelFromBuffer(
   }
 
   const primary = years[0];
+  const cashFlowSchedule = parseCashFlowScheduleFromWorkbook(workbook, XLSX) ?? undefined;
+  const kwaccSchedule = cashFlowSchedule?.kwaccSchedule;
 
   const parsed: ParsedEerrExcel = {
     sourceFileName: fileName,
     sheetName,
     years,
     params: params,
+    kwaccSchedule,
+    cashFlowSchedule,
     months: primary?.months ?? [...CASHFLOW_MONTHS],
     rows: primary?.rows ?? [],
   };

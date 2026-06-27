@@ -41,9 +41,15 @@ export function formatPercent(ratio: number, decimals = 1): string {
   return `${(ratio * 100).toFixed(decimals)}%`;
 }
 
-/** Monto en millones para KPIs: 2605 M (ARS) o 1.83 M USD */
+function formatMillionsCompact(abs: number): string {
+  const millions = abs / 1_000_000;
+  const rounded = Math.round(millions * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/** Monto en millones para KPIs: 2605 M (ARS) o 1.8 M USD */
 export function formatMillions(value: number): string {
-  return `${Math.round(value / 1_000_000)} M`;
+  return `${formatMillionsCompact(Math.abs(value))} M`;
 }
 
 export function formatMillionsForCurrency(
@@ -57,11 +63,11 @@ export function formatMillionsForCurrency(
   return formatMillions(valueArs);
 }
 
-/** Formato compacto sin decimales: $238k, $1M, $2M */
+/** Formato compacto: $238k, $2.5M, $141.1M */
 export function compactCurrency(value: number): string {
   const abs = Math.abs(value);
   const sign = value < 0 ? "-" : "";
-  if (abs >= 1_000_000) return `${sign}$${Math.round(abs / 1_000_000)}M`;
+  if (abs >= 1_000_000) return `${sign}$${formatMillionsCompact(abs)}M`;
   if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`;
   return `${sign}$${Math.round(abs)}`;
 }
