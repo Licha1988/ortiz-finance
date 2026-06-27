@@ -4,14 +4,19 @@ import {
 } from "@/lib/investment/project-data";
 import type { BusinessYearFlow } from "@/lib/investment/eerr-operational-flows";
 import {
+  computeOperatorBonusSchedule,
+  type OperatorBonusTier,
+  type OperatorBonusYearResult,
+} from "@/lib/investment/operator-margin-bonus";
+import {
   applyOperatorEquitySplit,
   buildEquityMetricsFlows,
 } from "@/lib/investment/operator-equity";
 import {
-  buildEquityInvestorFlowsYearZero,
   computeLoanServiceSchedule,
   type LoanServiceYear,
 } from "@/lib/investment/loan-service";
+import { OPERATOR_EQUITY_SHARE } from "@/lib/investment/project-data";
 import {
   buildKwaccSchedule,
   computeIrr,
@@ -30,12 +35,20 @@ export type InvestmentModelParams = {
   kwaccScheduleFull?: number[];
 };
 
+export type InvestorCashflowOptions = {
+  operatorBonusTiers?: OperatorBonusTier[];
+  exchangeRatesByYear?: number[];
+};
+
 export type InvestorCashflowYear = LoanServiceYear &
   BusinessYearFlow & {
     presentValueUsd: number;
     kwacc: number;
     investorDividendUsd: number;
     operatorDividendUsd: number;
+    operatorBonusUsd: number;
+    operatorEquityReleaseUsd: number;
+    operationalMarginPct: number;
     equityReleaseMilestone: boolean;
   };
 
@@ -48,6 +61,10 @@ export type InvestorCashflowResult = {
   vanPresentValues: number[];
   investorDividendsUsd: number[];
   operatorDividendsUsd: number[];
+  operatorBonusUsd: number[];
+  operatorEquityReleaseUsd: number[];
+  operatorBonusSchedule: OperatorBonusYearResult[];
+  totalOperatorBonusUsd: number;
   equityReleaseYear: number | null;
   discountRates: number[];
   npv: number;
@@ -79,13 +96,13 @@ function presentValueAtPeriod(cashFlow: number, rate: number, period: number): n
 export function buildInvestorCashflow(
   params: InvestmentModelParams,
   businessFlows: BusinessYearFlow[],
+  options: InvestorCashflowOptions = {},
 ): InvestorCashflowResult {
   const loanPrincipal = Math.max(0, params.totalInvestmentUsd - params.equityUsd);
   const horizon = Math.min(INVESTMENT_HORIZON_YEARS, businessFlows.length);
+  const flowsSlice = businessFlows.slice(0, horizon);
 
-  const operationalFfl = businessFlows
-    .slice(0, horizon)
-    .map((flow) => flow.operationalFflUsd);
+  const operationalFfl = flowsSlice.map((flow) => flow.operationalFflUsd);
 
   const loanSchedule = computeLoanServiceSchedule(
     loanPrincipal,
@@ -93,11 +110,35 @@ export function buildInvestorCashflow(
     operationalFfl,
   );
 
-  const prePaybackCashFlows = buildEquityInvestorFlowsYearZero(
+  const exchangeRatesByYear =
+    options.exchangeRatesByYear ??
+    flowsSlice.map(() => 1);
+
+  const operatorBonusSchedule =
+    options.operatorBonusTiers != null
+      ? computeOperatorBonusSchedule(
+          flowsSlice,
+          options.operatorBonusTiers,
+          exchangeRatesByYear,
+        )
+      : flowsSlice.map((flow) => ({
+          yearSalesArs: flow.ventasArs,
+          ebitdaArs: flow.ebitdaArs,
+          operationalMarginPct: flow.ventasArs > 0 ? (flow.ebitdaArs / flow.ventasArs) * 100 : 0,
+          bonusArs: 0,
+          bonusUsd: 0,
+          bands: [],
+        }));
+
+  const operatorBonusUsdByYear = operatorBonusSchedule.map((row) => row.bonusUsd);
+
+  const split = applyOperatorEquitySplit(
     params.equityUsd,
     loanSchedule,
+    OPERATOR_EQUITY_SHARE,
+    operatorBonusUsdByYear,
   );
-  const split = applyOperatorEquitySplit(params.equityUsd, loanSchedule);
+
   const equityMetricsFlows = buildEquityMetricsFlows(
     params.equityUsd,
     split.investorDividendsUsd,
@@ -116,7 +157,8 @@ export function buildInvestorCashflow(
   const vanTotalUsd = vanPresentValues.reduce((sum, value) => sum + value, 0);
 
   const years: InvestorCashflowYear[] = loanSchedule.map((row, index) => {
-    const business = businessFlows[index];
+    const business = businessFlows[index]!;
+    const bonusRow = operatorBonusSchedule[index];
     const kwacc = kwaccByYear[index] ?? params.kwaccFinal;
     const investorDividend = split.investorDividendsUsd[index] ?? 0;
     return {
@@ -125,11 +167,16 @@ export function buildInvestorCashflow(
       repartijaUsd: row.equityFfl,
       investorDividendUsd: investorDividend,
       operatorDividendUsd: split.operatorDividendsUsd[index] ?? 0,
+      operatorBonusUsd: split.operatorBonusUsd[index] ?? 0,
+      operatorEquityReleaseUsd: split.operatorEquityReleaseUsd[index] ?? 0,
+      operationalMarginPct: bonusRow?.operationalMarginPct ?? 0,
       equityReleaseMilestone: split.paybackYearIndex === index,
       kwacc,
       presentValueUsd: vanPresentValues[index + 1] ?? 0,
     };
   });
+
+  const totalOperatorBonusUsd = split.operatorBonusUsd.reduce((sum, value) => sum + value, 0);
 
   return {
     loanPrincipal,
@@ -138,11 +185,15 @@ export function buildInvestorCashflow(
     vanPresentValues,
     investorDividendsUsd: split.investorDividendsUsd,
     operatorDividendsUsd: split.operatorDividendsUsd,
+    operatorBonusUsd: split.operatorBonusUsd,
+    operatorEquityReleaseUsd: split.operatorEquityReleaseUsd,
+    operatorBonusSchedule,
+    totalOperatorBonusUsd,
     equityReleaseYear: split.equityReleaseYear,
     discountRates: kwaccByYear,
     npv: vanTotalUsd,
     irr: computeIrr(equityMetricsFlows, 0.15, 0),
-    paybackYears: computePaybackYears(prePaybackCashFlows, 0),
+    paybackYears: computePaybackYears(equityMetricsFlows, 0),
   };
 }
 

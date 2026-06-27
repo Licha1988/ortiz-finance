@@ -22,37 +22,37 @@ export const PIPELINE_MILESTONES: PipelineMilestone[] = [
     id: "fin-obra",
     label: "Fin de obra",
     status: "pending",
-    dateLabel: null,
+    dateLabel: "14 ago 2026",
   },
   {
     id: "pruebas-cocina",
     label: "Pruebas de cocina",
     status: "pending",
-    dateLabel: null,
+    dateLabel: "6 pruebas en jul · 2 pruebas en ago",
   },
   {
     id: "pruebas-bebidas",
     label: "Pruebas de bebidas",
     status: "pending",
-    dateLabel: null,
+    dateLabel: "3 pruebas en jul · 2 pruebas en ago",
   },
   {
     id: "pruebas-servicio",
     label: "Pruebas de servicio",
     status: "pending",
-    dateLabel: null,
+    dateLabel: "4 pruebas en jul · 6 pruebas en ago",
   },
   {
     id: "marcha-blanca",
     label: "Marcha blanca",
     status: "pending",
-    dateLabel: null,
+    dateLabel: "17 y 18 ago 2026",
   },
   {
     id: "apertura",
     label: "Apertura oficial",
     status: "pending",
-    dateLabel: "Primera semana de agosto 2026",
+    dateLabel: "19 ago 2026",
   },
 ];
 

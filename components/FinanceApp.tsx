@@ -7,6 +7,7 @@ import CashflowExcelView from "@/components/CashflowExcelView";
 import { EerrModelProvider } from "@/components/EerrModelProvider";
 import FinanceTabs from "@/components/FinanceTabs";
 import InvestmentTab from "@/components/InvestmentTab";
+import ModelChatTab from "@/components/ModelChatTab";
 import PipelineSection from "@/components/PipelineSection";
 import PageLayout from "@/components/ui/PageLayout";
 import { type FinanceTabId } from "@/lib/finance-tabs";
@@ -45,6 +46,7 @@ export default function FinanceApp({ username }: FinanceAppProps) {
             {activeTab === "eerr" ? <CashflowExcelView /> : null}
             {activeTab === "pipeline" ? <PipelineSection /> : null}
             {activeTab === "investment" ? <InvestmentTab /> : null}
+            {activeTab === "assistant" ? <ModelChatTab /> : null}
           </div>
         </EerrModelProvider>
       </PageLayout>

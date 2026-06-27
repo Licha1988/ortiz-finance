@@ -1,12 +1,15 @@
 import { OPERATOR_EQUITY_SHARE } from "@/lib/investment/project-data";
 import type { LoanServiceYear } from "@/lib/investment/loan-service";
-import { buildEquityInvestorFlowsYearZero } from "@/lib/investment/loan-service";
 
 export type OperatorEquitySplit = {
   paybackYearIndex: number | null;
   equityReleaseYear: number | null;
   investorDividendsUsd: number[];
   operatorDividendsUsd: number[];
+  /** Bono por margen (USD), antes del split equity. */
+  operatorBonusUsd: number[];
+  /** Parte del split 30% post-payback (sin bono). */
+  operatorEquityReleaseUsd: number[];
 };
 
 /** Primer índice donde el flujo acumulado al inversor (100% repartija) ≥ 0. */
@@ -35,29 +38,43 @@ export function applyOperatorEquitySplit(
   equityInvestmentUsd: number,
   loanSchedule: LoanServiceYear[],
   operatorShare: number = OPERATOR_EQUITY_SHARE,
+  operatorBonusUsdByYear: number[] = [],
 ): OperatorEquitySplit {
-  const prePaybackCashFlows = buildEquityInvestorFlowsYearZero(
-    equityInvestmentUsd,
-    loanSchedule,
-  );
+  const bonusByYear = loanSchedule.map((row, index) => {
+    const rawBonus = Math.max(0, operatorBonusUsdByYear[index] ?? 0);
+    return Math.min(rawBonus, Math.max(0, row.equityFfl));
+  });
+
+  const prePaybackCashFlows = [
+    -equityInvestmentUsd,
+    ...loanSchedule.map((row, index) => Math.max(0, row.equityFfl - bonusByYear[index]!)),
+  ];
   const paybackFlowIndex = findPaybackYearIndex(prePaybackCashFlows);
   const paybackYearIndex = operationalIndexFromPaybackFlowIndex(paybackFlowIndex);
   const investorShareAfterPayback = 1 - operatorShare;
 
   const investorDividendsUsd: number[] = [];
   const operatorDividendsUsd: number[] = [];
+  const operatorBonusUsd: number[] = [];
+  const operatorEquityReleaseUsd: number[] = [];
 
   loanSchedule.forEach((row, index) => {
-    const gross = row.equityFfl;
+    const bonus = bonusByYear[index]!;
+    const distributable = Math.max(0, row.equityFfl - bonus);
     const postPayback =
       paybackYearIndex !== null && index >= paybackYearIndex;
 
+    const equityReleaseShare = postPayback ? distributable * operatorShare : 0;
+
+    operatorBonusUsd.push(bonus);
+    operatorEquityReleaseUsd.push(equityReleaseShare);
+
     if (postPayback) {
-      operatorDividendsUsd.push(gross * operatorShare);
-      investorDividendsUsd.push(gross * investorShareAfterPayback);
+      operatorDividendsUsd.push(bonus + equityReleaseShare);
+      investorDividendsUsd.push(distributable * investorShareAfterPayback);
     } else {
-      operatorDividendsUsd.push(0);
-      investorDividendsUsd.push(gross);
+      operatorDividendsUsd.push(bonus);
+      investorDividendsUsd.push(distributable);
     }
   });
 
@@ -67,6 +84,8 @@ export function applyOperatorEquitySplit(
       paybackYearIndex !== null ? loanSchedule[paybackYearIndex]?.year ?? null : null,
     investorDividendsUsd,
     operatorDividendsUsd,
+    operatorBonusUsd,
+    operatorEquityReleaseUsd,
   };
 }
 

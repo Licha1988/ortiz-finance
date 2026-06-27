@@ -1,4 +1,4 @@
-export type FinanceTabId = "eerr" | "pipeline" | "investment";
+export type FinanceTabId = "eerr" | "pipeline" | "investment" | "assistant";
 
 export type FinanceTab = {
   id: FinanceTabId;
@@ -21,5 +21,10 @@ export const FINANCE_TABS: FinanceTab[] = [
     id: "pipeline",
     label: "Pipeline apertura",
     description: "Hitos y avance de obra hasta la apertura",
+  },
+  {
+    id: "assistant",
+    label: "Asistente",
+    description: "Preguntas sobre el Excel · EERR, cash flow e inversión",
   },
 ];

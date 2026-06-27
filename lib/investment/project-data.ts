@@ -25,7 +25,7 @@ export const FINANCING_TOTAL_USD = EQUITY_INVESTMENT_USD + LOAN_INVESTMENT_USD;
 /** @deprecated Alias de PROJECT_COST_USD — desglose izquierdo. */
 export const TOTAL_INVESTMENT_USD = PROJECT_COST_USD;
 
-export const DEFAULT_LOAN_RATE_ANNUAL = 0.08;
+export const DEFAULT_LOAN_RATE_ANNUAL = 0.15;
 
 export function loanPrincipalFromStructure(
   totalUsd: number,

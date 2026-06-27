@@ -30,7 +30,7 @@ export default function PipelineSection() {
   return (
     <SectionCard
       title="Pipeline pre-apertura"
-      subtitle="Hitos hasta la apertura · fechas se cargarán próximamente"
+      subtitle="Hitos hasta la apertura · apertura 19 ago 2026"
       tone="finance"
     >
       <div className="grid gap-8 p-5 lg:grid-cols-[1fr_280px]">

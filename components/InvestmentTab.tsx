@@ -19,22 +19,33 @@ import {
   CASHFLOW_BRIDGE_LINES,
   type CashflowBridgeLineId,
 } from "@/lib/investment/cashflow-bridge";
-import { buildBusinessFlowsFromEerr } from "@/lib/investment/eerr-operational-flows";
 import {
   buildScenarioChartSeries,
   totalHorizonCovers,
 } from "@/lib/investment/scenario-volume";
 import {
+  buildScenarioBusinessFlowsFromEerr,
+  isOperationalScenarioActive,
+  resolveTicketFromParams,
+  scenarioAnnualCovers,
+  scenarioYear1Kpis,
+} from "@/lib/investment/operational-scenario";
+import {
   buildInvestorCashflow,
   type InvestmentModelParams,
 } from "@/lib/investment/investor-cashflow";
+import { withEditableTierRates } from "@/lib/investment/operator-margin-bonus";
+import OperatorBonusPanel from "@/components/OperatorBonusPanel";
+import EbitdaMarginHorizon from "@/components/EbitdaMarginHorizon";
 import InvestmentSection from "@/components/InvestmentSection";
 import EerrExcelActions from "@/components/EerrExcelActions";
 import ScenarioHorizonChart from "@/components/ScenarioHorizonChart";
 import ParamField from "@/components/ui/ParamField";
+import ScenarioAdjustField from "@/components/ui/ScenarioAdjustField";
 import {
   formatCovers,
   formatPercent,
+  compactCurrency,
   compactFromUsd,
   compactMoney,
 } from "@/lib/format";
@@ -64,6 +75,32 @@ export default function InvestmentTab() {
   const [exchangeRateOverride, setExchangeRateOverride] = useState<number | null>(null);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
   const [loanRatePct, setLoanRatePct] = useState(DEFAULT_LOAN_RATE_ANNUAL * 100);
+  const [volumeChangePct, setVolumeChangePct] = useState(0);
+  const [ticketChangePct, setTicketChangePct] = useState(0);
+  const [operatorBonusRatesPct, setOperatorBonusRatesPct] = useState([10, 25, 40, 50]);
+
+  const operatorBonusTiers = useMemo(
+    () => withEditableTierRates(operatorBonusRatesPct),
+    [operatorBonusRatesPct],
+  );
+
+  const handleBonusRateChange = (index: number, ratePct: number) => {
+    setOperatorBonusRatesPct((prev) =>
+      prev.map((value, i) => (i === index ? ratePct : value)),
+    );
+  };
+
+  const operationalScenario = useMemo(
+    () => ({ volumeChangePct, ticketChangePct }),
+    [volumeChangePct, ticketChangePct],
+  );
+  const scenarioActive = isOperationalScenarioActive(operationalScenario);
+
+  const baseTicket = useMemo(
+    () => resolveTicketFromParams(eerrModel.params),
+    [eerrModel.params],
+  );
+  const scenarioTicket = baseTicket * (1 + ticketChangePct / 100);
 
   const equityUsd = EQUITY_INVESTMENT_USD;
   const totalUsd = FINANCING_TOTAL_USD;
@@ -87,22 +124,35 @@ export default function InvestmentTab() {
   );
 
   const year1Kpis = useMemo(
-    () => extractYearKpisFromRows(eerrModel.years[0]?.rows ?? []),
+    () => scenarioYear1Kpis(eerrModel.years, operationalScenario, baseTicket),
+    [eerrModel.years, operationalScenario, baseTicket],
+  );
+
+  const baseYear1Covers = useMemo(
+    () => extractYearKpisFromRows(eerrModel.years[0]?.rows ?? []).annualCovers,
     [eerrModel.years],
   );
 
-  const totalCovers10y = useMemo(
-    () => totalHorizonCovers(eerrModel.years),
-    [eerrModel.years],
-  );
+  const totalCovers10y = useMemo(() => {
+    if (!scenarioActive) return totalHorizonCovers(eerrModel.years);
+    return scenarioAnnualCovers(eerrModel.years, volumeChangePct).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+  }, [eerrModel.years, scenarioActive, volumeChangePct]);
 
   const businessFlows = useMemo(
     () =>
-      buildBusinessFlowsFromEerr(eerrModel.years, {
-        exchangeRate,
-        cashFlowSchedule: excelSchedule,
-      }),
-    [eerrModel.years, exchangeRate, excelSchedule],
+      buildScenarioBusinessFlowsFromEerr(
+        eerrModel.years,
+        {
+          exchangeRate,
+          cashFlowSchedule: excelSchedule,
+        },
+        operationalScenario,
+        baseTicket,
+      ),
+    [eerrModel.years, exchangeRate, excelSchedule, operationalScenario, baseTicket],
   );
 
   const flowY1 = useMemo(() => businessFlows[0], [businessFlows]);
@@ -123,20 +173,46 @@ export default function InvestmentTab() {
     [equityUsd, totalUsd, loanRate, kwaccForInvestorDiscount, kwaccScheduleFull],
   );
 
-  const cashflow = useMemo(
-    () => buildInvestorCashflow(investmentParams, businessFlows),
-    [investmentParams, businessFlows],
+  const exchangeRatesByYear = useMemo(
+    () =>
+      businessFlows.map((_, index) => {
+        const fromSchedule = excelSchedule?.exchangeRates[index + 1];
+        return fromSchedule && fromSchedule > 0 ? fromSchedule : exchangeRate;
+      }),
+    [businessFlows, excelSchedule, exchangeRate],
   );
 
-  const chartSeries = useMemo(
+  const cashflow = useMemo(
     () =>
-      buildScenarioChartSeries(
+      buildInvestorCashflow(investmentParams, businessFlows, {
+        operatorBonusTiers,
+        exchangeRatesByYear,
+      }),
+    [investmentParams, businessFlows, operatorBonusTiers, exchangeRatesByYear],
+  );
+
+  const chartSeries = useMemo(() => {
+    if (!scenarioActive) {
+      return buildScenarioChartSeries(
         eerrModel.years,
         businessFlows,
         cashflow.investorDividendsUsd,
-      ),
-    [eerrModel.years, businessFlows, cashflow.investorDividendsUsd],
-  );
+      );
+    }
+    const covers = scenarioAnnualCovers(eerrModel.years, volumeChangePct);
+    return businessFlows.map((flow, index) => ({
+      year: flow.year,
+      covers: covers[index] ?? 0,
+      nopatUsd: flow.nopatUsd,
+      dividendsUsd: cashflow.investorDividendsUsd[index] ?? 0,
+    }));
+  }, [
+    eerrModel.years,
+    businessFlows,
+    cashflow.investorDividendsUsd,
+    scenarioActive,
+    volumeChangePct,
+  ]);
 
   const totals10y = useMemo(() => {
     const nopat = businessFlows.reduce((sum, row) => sum + row.nopatUsd, 0);
@@ -150,6 +226,9 @@ export default function InvestmentTab() {
     setExchangeRateOverride(null);
     setDisplayCurrency("usd");
     setLoanRatePct(DEFAULT_LOAN_RATE_ANNUAL * 100);
+    setVolumeChangePct(0);
+    setTicketChangePct(0);
+    setOperatorBonusRatesPct([10, 25, 40, 50]);
   };
 
   const modelSourceLabel =
@@ -178,6 +257,13 @@ export default function InvestmentTab() {
             <p className="text-xs text-stone-500">
               Ventas, EBITDA y resultado neto desde filas EERR · NOPAT y FFL operativo desde Cash
               Flow cuando el archivo los incluye
+              {scenarioActive ? (
+                <span className="mt-1 block font-medium text-violet-800">
+                  Escenario activo: cubiertos {volumeChangePct >= 0 ? "+" : ""}
+                  {volumeChangePct}% · ticket {ticketChangePct >= 0 ? "+" : ""}
+                  {ticketChangePct}% — recálculo automático en toda la pestaña
+                </span>
+              ) : null}
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <EerrExcelActions />
@@ -195,14 +281,30 @@ export default function InvestmentTab() {
         <div className="grid gap-6 p-5 xl:grid-cols-[minmax(280px,320px)_minmax(280px,320px)_1fr]">
           <div className="space-y-4 rounded-xl border border-stone-200/80 bg-gradient-to-br from-white to-stone-50 p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
-              Operación · 10 años (Excel)
+              {scenarioActive ? "Operación · escenario" : "Operación · 10 años (Excel)"}
             </p>
             <div className="space-y-3 text-sm text-stone-700">
+              <p>
+                Ticket promedio:{" "}
+                <span className="font-semibold tabular-nums text-violet-900">
+                  {compactCurrency(scenarioTicket)} ARS
+                </span>
+                {scenarioActive && ticketChangePct !== 0 ? (
+                  <span className="ml-1 text-[11px] text-stone-400">
+                    (base {compactCurrency(baseTicket)})
+                  </span>
+                ) : null}
+              </p>
               <p>
                 Cubiertos Año 1:{" "}
                 <span className="font-semibold tabular-nums text-violet-900">
                   {formatCovers(year1Kpis.annualCovers)}
                 </span>
+                {scenarioActive && volumeChangePct !== 0 ? (
+                  <span className="ml-1 text-[11px] text-stone-400">
+                    (base {formatCovers(baseYear1Covers)})
+                  </span>
+                ) : null}
               </p>
               <p>
                 Cubiertos acum. 10a:{" "}
@@ -269,13 +371,48 @@ export default function InvestmentTab() {
                 return Number.isFinite(n) && n >= 0 ? n : null;
               }}
             />
+            <div className="space-y-4 border-t border-stone-100 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
+                Escenario operativo
+              </p>
+              <ScenarioAdjustField
+                label="Cubiertos (volumen)"
+                helper="Escala cubiertos en los 10 años conservando el ramp-up mensual de cada año."
+                baseDisplay={formatCovers(baseYear1Covers) + " Año 1"}
+                valuePct={volumeChangePct}
+                onChange={setVolumeChangePct}
+                min={-50}
+                max={50}
+              />
+              <ScenarioAdjustField
+                label="Ticket promedio"
+                helper="Precio por cubierto. Costos variables escalan con ventas; estructura fija."
+                baseDisplay={`${compactCurrency(baseTicket)} ARS`}
+                valuePct={ticketChangePct}
+                onChange={setTicketChangePct}
+                min={-50}
+                max={50}
+              />
+            </div>
           </div>
 
           <div className="space-y-4">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-stone-500">
               Retorno al equity (10 años)
             </p>
-            <div className="grid gap-4 sm:grid-cols-1 lg:max-w-xs">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <KpiCard
+                label="TIR equity"
+                value={cashflow.irr !== null ? formatPercent(cashflow.irr) : "—"}
+                hint="Flujo nominal Año 0 + dividendos netos"
+                tone="violet"
+              />
+              <KpiCard
+                label="VAN equity"
+                value={compactFromUsd(cashflow.npv, displayCurrency, exchangeRate)}
+                hint="Descontado con Kwacc del Excel"
+                tone="emerald"
+              />
               <KpiCard
                 label="Payback"
                 value={
@@ -286,7 +423,7 @@ export default function InvestmentTab() {
                 hint={
                   cashflow.paybackYears !== null
                     ? cashflow.equityReleaseYear !== null
-                      ? `Payback ~${cashflow.paybackYears.toFixed(1)}a · liberación operadores Año ${cashflow.equityReleaseYear}`
+                      ? `Liberación operadores Año ${cashflow.equityReleaseYear}`
                       : `${cashflow.paybackYears.toFixed(1)} años`
                     : "Recuperación del equity"
                 }
@@ -315,6 +452,14 @@ export default function InvestmentTab() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 bg-stone-50/50 px-5 py-4">
           <p className="text-xs text-stone-500">
             TC {exchangeRate.toLocaleString("es-AR")} ARS/USD · Ventas y EBITDA en ARS (EERR)
+            {scenarioActive ? (
+              <>
+                {" "}
+                · Escenario: cubiertos {volumeChangePct >= 0 ? "+" : ""}
+                {volumeChangePct}% · ticket {ticketChangePct >= 0 ? "+" : ""}
+                {ticketChangePct}%
+              </>
+            ) : null}
             {fflFromExcel ? (
               <> · NOPAT y FFL operativo desde hoja Cash Flow (Excel)</>
             ) : (
@@ -442,12 +587,20 @@ export default function InvestmentTab() {
                 exchangeRate={exchangeRate}
               />
               <CashflowRow
-                label={`Liberación equity operadores (${Math.round(OPERATOR_EQUITY_SHARE * 100)}% · bullet payback)`}
-                values={withYearZero(0, cashflow.operatorDividendsUsd)}
+                label="Bono operadores (margen EBITDA · tramos)"
+                values={withYearZero(0, cashflow.operatorBonusUsd)}
                 valueKind="usd"
                 currency={displayCurrency}
                 exchangeRate={exchangeRate}
-                bridge
+                operatorBonus
+              />
+              <CashflowRow
+                label={`Liberación equity operadores (${Math.round(OPERATOR_EQUITY_SHARE * 100)}% · post payback)`}
+                values={withYearZero(0, cashflow.operatorEquityReleaseUsd)}
+                valueKind="usd"
+                currency={displayCurrency}
+                exchangeRate={exchangeRate}
+                emphasis
               />
               <CashflowRow
                 label="Dividendos inversores (neto)"
@@ -489,8 +642,11 @@ export default function InvestmentTab() {
               : " = NOPAT − reserva despidos (estimado si no hay Excel)."}
             <strong className="font-medium text-stone-600"> Dividendos disponibles</strong> = FFL operativo neto
             de servicio de deuda (interés primero, luego capital).{" "}
-            <strong className="font-medium text-stone-600">Liberación operadores</strong> = bullet del{" "}
-            {Math.round(OPERATOR_EQUITY_SHARE * 100)}% de equity al alcanzar payback del inversor; desde
+            <strong className="font-medium text-stone-600">Bono operadores</strong> = % marginal del EBITDA
+            según tramos de margen (5–10%, 10–15%, 15–20%, 20% o +); se descuenta del FFL to equity antes
+            del reparto.{" "}
+            <strong className="font-medium text-stone-600">Liberación operadores</strong> ={" "}
+            {Math.round(OPERATOR_EQUITY_SHARE * 100)}% del FFL remanente post-bono desde payback; desde
             ese año el reparto es 70% inversor / 30% operadores sobre el excedente.{" "}
             <strong className="font-medium text-stone-600">VAN/TIR</strong> solo sobre{" "}
             <strong className="font-medium text-stone-600">equity inversores</strong>: aporte{" "}
@@ -500,6 +656,18 @@ export default function InvestmentTab() {
             <span className="mt-1 block text-stone-500">*no contempla IIGG</span>
           </p>
         </div>
+
+        <EbitdaMarginHorizon schedule={cashflow.operatorBonusSchedule} />
+
+        <OperatorBonusPanel
+          tierRatesPct={operatorBonusRatesPct}
+          onTierRateChange={handleBonusRateChange}
+          totalBonusUsd={cashflow.totalOperatorBonusUsd}
+          displayCurrency={displayCurrency}
+          exchangeRate={exchangeRate}
+          year1MarginPct={cashflow.operatorBonusSchedule[0]?.operationalMarginPct ?? 0}
+          year1BonusUsd={cashflow.operatorBonusUsd[0] ?? 0}
+        />
       </SectionCard>
     </div>
   );
@@ -520,6 +688,7 @@ type CashflowRowProps = {
   muted?: boolean;
   netResult?: boolean;
   bridge?: boolean;
+  operatorBonus?: boolean;
 };
 
 function CashflowRow({
@@ -536,6 +705,7 @@ function CashflowRow({
   muted,
   netResult,
   bridge,
+  operatorBonus,
 }: CashflowRowProps) {
   const rowClass = total
     ? "bg-slate-800 font-bold text-white"
@@ -543,15 +713,17 @@ function CashflowRow({
       ? "bg-orange-500 font-bold text-white"
       : highlight
         ? "bg-violet-50/80 font-semibold text-violet-950"
-        : debt
-          ? "bg-amber-50/50 text-amber-950"
-          : bridge
-            ? "text-[11px] text-stone-500"
-            : emphasis
-              ? "bg-stone-100 font-semibold"
-              : muted
-                ? "text-stone-500"
-                : "border-b border-stone-100";
+        : operatorBonus
+          ? "bg-teal-50/80 font-semibold text-teal-950"
+          : debt
+            ? "bg-amber-50/50 text-amber-950"
+            : bridge
+              ? "text-[11px] text-stone-500"
+              : emphasis
+                ? "bg-stone-100 font-semibold"
+                : muted
+                  ? "text-stone-500"
+                  : "border-b border-stone-100";
 
   const formatCell = (value: number) =>
     valueKind === "ars"
