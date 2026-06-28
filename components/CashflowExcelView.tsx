@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import EerrScenarioPanel from "@/components/EerrScenarioPanel";
 import EerrStatementTable from "@/components/EerrStatementTable";
 import EerrExcelActions from "@/components/EerrExcelActions";
 import { isBundledEerrModel, useEerrModel } from "@/components/EerrModelProvider";
 import EmptyState from "@/components/ui/EmptyState";
 import KpiCard from "@/components/ui/KpiCard";
 import SectionCard from "@/components/ui/SectionCard";
-import { findEerrRow } from "@/lib/cashflow/parse-eerr-excel";
+import { extractYearKpisFromRows } from "@/lib/cashflow/eerr-kpis";
 import { type EerrYearId } from "@/lib/cashflow/eerr-years";
 import { formatMillionsForCurrency, formatPercent } from "@/lib/format";
 import {
@@ -18,6 +19,7 @@ import { isFullOperationYear } from "@/lib/cashflow/eerr-years";
 import EerrCurrencyBar from "@/components/EerrCurrencyBar";
 import { BUNDLED_EERR_SOURCE_NAME } from "@/lib/cashflow/load-eerr-model";
 import { isEerrImportAllowed } from "@/lib/cashflow/eerr-model-admin";
+import { resolveTicketFromParams } from "@/lib/investment/operational-scenario";
 
 export default function CashflowExcelView() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -73,27 +75,20 @@ export default function CashflowExcelView() {
 
   const kpis = useMemo(() => {
     const rows = activeYear?.rows ?? [];
-    const salesRow = findEerrRow(rows, (label) => label === "ventas");
-    const ebitdaRow = findEerrRow(rows, (label) => label === "ebitda");
-    const netRow = findEerrRow(rows, (label) => label.includes("resultado neto"));
-    const marginRow = findEerrRow(rows, (label) => label.includes("margen bruto"));
-
-    const yearSales = salesRow?.yearTotal ?? 0;
-    const yearEbitda = ebitdaRow?.yearTotal ?? 0;
-    const yearNet = netRow?.yearTotal ?? 0;
-    const ebitdaMargin = yearSales > 0 ? yearEbitda / yearSales : 0;
-    const netMargin = yearSales > 0 ? yearNet / yearSales : 0;
-    const grossMarginShare =
-      marginRow?.yearTotal != null && yearSales > 0 ? marginRow.yearTotal / yearSales : 0;
+    const extracted = extractYearKpisFromRows(rows);
+    const yearSales = extracted.yearSales;
+    const yearEbitda = extracted.ebitda;
+    const yearNet = extracted.netResult;
+    const grossMargin = extracted.grossMargin;
 
     return {
       yearSales,
       yearEbitda,
       yearNet,
-      ebitdaMargin,
-      netMargin,
-      grossMarginShare,
-      grossMargin: marginRow?.yearTotal ?? null,
+      ebitdaMargin: yearSales > 0 ? yearEbitda / yearSales : 0,
+      netMargin: yearSales > 0 ? yearNet / yearSales : 0,
+      grossMarginShare: yearSales > 0 ? grossMargin / yearSales : 0,
+      grossMargin,
     };
   }, [activeYear]);
 
@@ -103,6 +98,11 @@ export default function CashflowExcelView() {
     );
     return param?.displayValue ?? "—";
   }, [parsed.params]);
+
+  const baseTicket = useMemo(
+    () => resolveTicketFromParams(parsed.params),
+    [parsed.params],
+  );
 
   const allowImport = isEerrImportAllowed();
   const isBundledModel = isBundledEerrModel(source, parsed);
@@ -241,7 +241,7 @@ export default function CashflowExcelView() {
                 />
                 <KpiCard
                   label={`Margen bruto ${yearLabel}`}
-                  value={formatMillionsForCurrency(kpis.grossMargin ?? 0, displayCurrency, exchangeRate)}
+                  value={formatMillionsForCurrency(kpis.grossMargin, displayCurrency, exchangeRate)}
                   hint={`${formatPercent(kpis.grossMarginShare)} sobre ventas`}
                   tone="stone"
                 />
@@ -262,6 +262,15 @@ export default function CashflowExcelView() {
                   meta={{
                     yearLabel,
                   }}
+                />
+                <EerrScenarioPanel
+                  key={activeYearId}
+                  rows={activeYear?.rows ?? []}
+                  months={activeYear?.months ?? []}
+                  displayCurrency={displayCurrency}
+                  exchangeRate={exchangeRate}
+                  baseTicket={baseTicket}
+                  yearLabel={yearLabel}
                 />
               </div>
             </div>

@@ -16,6 +16,7 @@ import {
   NOMINA_FULL,
   parseRampPercentInput,
 } from "@/lib/cashflow/eerr-nomina";
+import { isHiddenEerrDisplayRow } from "@/lib/cashflow/eerr-row-layout";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import {
   currencyLabel,
@@ -209,6 +210,7 @@ export default function EerrStatementTable({
   meta,
   onNominaRampChange,
 }: EerrStatementTableProps) {
+  const visibleRows = rows.filter((row) => !isHiddenEerrDisplayRow(row));
   const yearSales = yearSalesTotal(rows);
   const formatOptions = { currency: displayCurrency, exchangeRate };
 
@@ -264,11 +266,11 @@ export default function EerrStatementTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, index) => {
+            {visibleRows.map((row, index) => {
               const visual = classifyEerrRow(row);
               const stripe =
                 visual === "detail"
-                  ? detailStripeIndex(rows, index)
+                  ? detailStripeIndex(visibleRows, index)
                   : index;
 
               return (

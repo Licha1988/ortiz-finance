@@ -47,9 +47,11 @@ function formatMillionsCompact(abs: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-/** Monto en millones para KPIs: 2605 M (ARS) o 1.8 M USD */
+/** Monto en millones para KPIs: 2605 M, −4.3 M (ARS) o 1.8 M USD */
 export function formatMillions(value: number): string {
-  return `${formatMillionsCompact(Math.abs(value))} M`;
+  if (value === 0) return "0 M";
+  const sign = value < 0 ? "−" : "";
+  return `${sign}${formatMillionsCompact(Math.abs(value))} M`;
 }
 
 export function formatMillionsForCurrency(

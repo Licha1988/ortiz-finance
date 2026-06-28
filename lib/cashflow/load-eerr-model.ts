@@ -1,4 +1,5 @@
 import { syncPrimaryYear } from "@/lib/cashflow/eerr-model-mutate";
+import { normalizeOperationalMonths } from "@/lib/cashflow/months";
 import { parseEerrExcelFromBuffer, type ParsedEerrExcel } from "@/lib/cashflow/parse-eerr-excel";
 
 export const BUNDLED_EERR_MODEL_URL = "/models/ortiz-cashflow.xlsx";
@@ -12,7 +13,10 @@ export async function loadEerrModelFromBuffer(
   if (result.years.length === 0 || result.years[0]?.rows.length === 0) {
     throw new Error("No se encontraron filas del EERR.");
   }
-  return syncPrimaryYear(result);
+  return syncPrimaryYear({
+    ...result,
+    years: normalizeOperationalMonths(result.years),
+  });
 }
 
 export async function loadEerrModelFromUrl(

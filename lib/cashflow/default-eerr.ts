@@ -2,16 +2,28 @@ import type { ParsedEerrExcel } from "@/lib/cashflow/parse-eerr-excel";
 import { extendEerrHorizon } from "@/lib/cashflow/extend-eerr-horizon";
 import { EERR_HORIZON_YEARS, FULL_RAMP_SCHEDULE, type EerrYearSlice } from "@/lib/cashflow/eerr-years";
 import { applyEerrBusinessRules } from "@/lib/cashflow/eerr-rules";
-import { applyEerrModelParams } from "@/lib/cashflow/eerr-model-params";
+import { applyEerrModelParams, RAMP_UP_SCHEDULE } from "@/lib/cashflow/eerr-model-params";
+import {
+  closingAugustValue,
+  reorderYearToOperationalMonths,
+} from "@/lib/cashflow/months";
 
-function processDefaultYear(year: EerrYearSlice): EerrYearSlice {
+function processDefaultYear(
+  year: EerrYearSlice,
+  allRawYears: EerrYearSlice[],
+): EerrYearSlice {
+  const yearIndex = allRawYears.findIndex((item) => item.id === year.id);
+  const reordered = reorderYearToOperationalMonths(year, (row) =>
+    closingAugustValue(row, year, allRawYears[yearIndex + 1]),
+  );
+  const year1Ramp = [...RAMP_UP_SCHEDULE.slice(1), 1];
   const options =
-    year.id === "year1"
-      ? {}
+    reordered.id === "year1"
+      ? { salesRampSchedule: year1Ramp }
       : { salesRampSchedule: FULL_RAMP_SCHEDULE, fullNominaRamp: true };
   return {
-    ...year,
-    rows: applyEerrModelParams(applyEerrBusinessRules(year.rows), options),
+    ...reordered,
+    rows: applyEerrModelParams(applyEerrBusinessRules(reordered.rows), options),
   };
 }
 
@@ -2015,8 +2027,10 @@ export { RAW_DEFAULT_EERR_DATA };
 export const DEFAULT_EERR_DATA = extendEerrHorizon(
   {
     ...RAW_DEFAULT_EERR_DATA,
-    years: RAW_DEFAULT_EERR_DATA.years.map(processDefaultYear),
-    rows: processDefaultYear(RAW_DEFAULT_EERR_DATA.years[0]!).rows,
+    years: RAW_DEFAULT_EERR_DATA.years.map((year) =>
+      processDefaultYear(year, RAW_DEFAULT_EERR_DATA.years),
+    ),
+    rows: processDefaultYear(RAW_DEFAULT_EERR_DATA.years[0]!, RAW_DEFAULT_EERR_DATA.years).rows,
   },
   EERR_HORIZON_YEARS,
 );

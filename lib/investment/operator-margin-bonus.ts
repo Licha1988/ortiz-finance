@@ -1,3 +1,6 @@
+/** Margen mínimo (hurdle) bajo el cual no hay bono operadores. */
+export const OPERATOR_BONUS_HURDLE_PCT = 10;
+
 /** Tramo de bono por margen operativo (EBITDA / ventas). */
 export type OperatorBonusTier = {
   /** Margen mínimo del tramo (%). Por debajo del primer tramo no hay bono. */
@@ -9,9 +12,8 @@ export type OperatorBonusTier = {
 };
 
 export const DEFAULT_OPERATOR_BONUS_TIERS: OperatorBonusTier[] = [
-  { marginFloorPct: 5, marginCeilingPct: 10, operatorSharePct: 10 },
-  { marginFloorPct: 10, marginCeilingPct: 15, operatorSharePct: 25 },
-  { marginFloorPct: 15, marginCeilingPct: 20, operatorSharePct: 40 },
+  { marginFloorPct: 10, marginCeilingPct: 15, operatorSharePct: 40 },
+  { marginFloorPct: 15, marginCeilingPct: 20, operatorSharePct: 45 },
   { marginFloorPct: 20, marginCeilingPct: null, operatorSharePct: 50 },
 ];
 
@@ -77,6 +79,12 @@ export function computeMarginalOperatorBonusArs(
   });
 
   return { bonusArs, operationalMarginPct, bands };
+}
+
+/** Bono como % del EBITDA del año (0 si no hay bono o EBITDA). */
+export function bonusShareOfEbitdaPct(ebitdaArs: number, bonusArs: number): number {
+  if (ebitdaArs <= 0 || bonusArs <= 0) return 0;
+  return (bonusArs / ebitdaArs) * 100;
 }
 
 export function computeOperatorBonusSchedule(

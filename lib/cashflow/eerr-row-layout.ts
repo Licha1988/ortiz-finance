@@ -57,6 +57,23 @@ export function isAguinaldoRow(row: EerrRow): boolean {
   return normalizeLabel(row.label).includes("aguinaldo");
 }
 
+/** Impuesto a las ganancias (fila «Impuestos» post-EBIT). No es Com. / Impuestos en variables. */
+export function isIncomeTaxEerrRow(row: EerrRow): boolean {
+  return normalizeLabel(row.label) === "impuestos";
+}
+
+/** Filas ocultas en la tabla EERR (permanecen en datos / KPIs). */
+export function isHiddenEerrDisplayRow(row: EerrRow): boolean {
+  const label = normalizeLabel(row.label);
+  if (isIncomeTaxEerrRow(row)) return true;
+  if (label.includes("base imp")) return true;
+  if (label.includes("resultado neto")) return true;
+  if (label === "inversion") return true;
+  if (label.includes("depreciacion")) return true;
+  if (label === "ebit") return true;
+  return false;
+}
+
 const STRUCTURE_DETAIL_ORDER = [
   "rrhh",
   "aguinaldo",

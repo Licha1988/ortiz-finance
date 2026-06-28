@@ -168,6 +168,7 @@ export function scenarioYear1Kpis(
   return {
     yearSales: scenario.yearSales,
     variableCosts: scenario.variableCosts,
+    grossMargin: scenario.grossMargin,
     ebitda: scenario.ebitda,
     netResult: scenario.netResult,
     rrhh: scenario.rrhh,
