@@ -5,18 +5,28 @@ export type LoanServiceYear = {
   interestAccrued: number;
   interestPaid: number;
   principalPaid: number;
+  /** true si en este año no se amortiza capital (roll de deuda). */
+  principalRollActive: boolean;
   equityFfl: number;
   balanceEnd: number;
 };
 
+export type LoanServiceOptions = {
+  /** Años iniciales sin amortizar capital: solo interés (roll de deuda). */
+  principalRollYears?: number;
+};
+
 /**
  * Servicio de deuda: primero interés, luego amortización de capital con el remanente.
+ * Con roll de deuda, los primeros N años no amortizan capital (saldo se mantiene).
  */
 export function computeLoanServiceSchedule(
   loanPrincipal: number,
   annualRate: number,
   operationalFflByYear: number[],
+  options: LoanServiceOptions = {},
 ): LoanServiceYear[] {
+  const rollYears = Math.max(0, options.principalRollYears ?? 0);
   let balance = loanPrincipal;
 
   return operationalFflByYear.map((operationalFfl, index) => {
@@ -28,8 +38,12 @@ export function computeLoanServiceSchedule(
       balanceStart > 0 ? Math.min(interestAccrued, Math.max(0, operationalFfl)) : 0;
 
     const afterInterest = operationalFfl - interestPaid;
-    const principalPaid =
-      balanceStart > 0 ? Math.min(Math.max(0, afterInterest), balanceStart) : 0;
+    const rollActive = rollYears > 0 && year <= rollYears && balanceStart > 0;
+    const principalPaid = rollActive
+      ? 0
+      : balanceStart > 0
+        ? Math.min(Math.max(0, afterInterest), balanceStart)
+        : 0;
 
     const equityFfl = afterInterest - principalPaid;
     const balanceEnd = balanceStart - principalPaid;
@@ -42,6 +56,7 @@ export function computeLoanServiceSchedule(
       interestAccrued,
       interestPaid,
       principalPaid,
+      principalRollActive: rollActive,
       equityFfl,
       balanceEnd,
     };

@@ -1,18 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useEerrModel } from "@/components/EerrModelProvider";
 import KpiCard from "@/components/ui/KpiCard";
 import SectionCard from "@/components/ui/SectionCard";
 import { DEFAULT_EXCHANGE_RATE, currencyLabel, type DisplayCurrency } from "@/lib/cashflow/exchange-rate";
-import { kwaccForInvestorYears } from "@/lib/cashflow/parse-cashflow-excel";
 import {
   DEFAULT_LOAN_RATE_ANNUAL,
-  BASE_KWACC_SCHEDULE,
   EQUITY_INVESTMENT_USD,
-  FINANCING_TOTAL_USD,
+  INITIAL_NOF_STOCK_USD,
   OPERATOR_EQUITY_SHARE,
-  loanPrincipalFromStructure,
 } from "@/lib/investment/project-data";
 import {
   CASHFLOW_BRIDGE_LINES,
@@ -23,16 +20,17 @@ import {
   totalHorizonCovers,
 } from "@/lib/investment/scenario-volume";
 import {
-  buildScenarioBusinessFlowsFromEerr,
   isOperationalScenarioActive,
   resolveTicketFromParams,
   scenarioAnnualCovers,
 } from "@/lib/investment/operational-scenario";
+import { buildInvestmentModelFromEerr } from "@/lib/investment/investment-model";
 import {
-  buildInvestorCashflow,
-  type InvestmentModelParams,
-} from "@/lib/investment/investor-cashflow";
-import { withEditableTierRates, bonusShareOfEbitdaPct } from "@/lib/investment/operator-margin-bonus";
+  DEFAULT_OPERATOR_BONUS_RATES_PCT,
+  normalizeInvestmentAssumptions,
+  writeInvestmentAssumptionsToSession,
+} from "@/lib/investment/investment-assumptions";
+import { bonusShareOfEbitdaPct } from "@/lib/investment/operator-margin-bonus";
 import OperatorBonusPanel from "@/components/OperatorBonusPanel";
 import EbitdaMarginHorizon from "@/components/EbitdaMarginHorizon";
 import InvestmentSection from "@/components/InvestmentSection";
@@ -75,12 +73,10 @@ export default function InvestmentTab() {
   const [loanRatePct, setLoanRatePct] = useState(DEFAULT_LOAN_RATE_ANNUAL * 100);
   const [volumeChangePct, setVolumeChangePct] = useState(0);
   const [ticketChangePct, setTicketChangePct] = useState(0);
-  const [operatorBonusRatesPct, setOperatorBonusRatesPct] = useState([40, 45, 50]);
-
-  const operatorBonusTiers = useMemo(
-    () => withEditableTierRates(operatorBonusRatesPct),
-    [operatorBonusRatesPct],
-  );
+  const [operatorBonusRatesPct, setOperatorBonusRatesPct] = useState<number[]>([
+    ...DEFAULT_OPERATOR_BONUS_RATES_PCT,
+  ]);
+  const [debtRollYears, setDebtRollYears] = useState(0);
 
   const handleBonusRateChange = (index: number, ratePct: number) => {
     setOperatorBonusRatesPct((prev) =>
@@ -101,25 +97,45 @@ export default function InvestmentTab() {
   const scenarioTicket = baseTicket * (1 + ticketChangePct / 100);
 
   const equityUsd = EQUITY_INVESTMENT_USD;
-  const totalUsd = FINANCING_TOTAL_USD;
-  const exchangeRate = exchangeRateOverride ?? excelTcDefault;
-
-  const loanPrincipal = loanPrincipalFromStructure(totalUsd, equityUsd);
   const loanRate = loanRatePct / 100;
 
-  const kwaccScheduleFull = useMemo((): number[] => {
-    if (eerrModel.kwaccSchedule && eerrModel.kwaccSchedule.length > 0) {
-      return eerrModel.kwaccSchedule;
-    }
-    return [...BASE_KWACC_SCHEDULE];
-  }, [eerrModel.kwaccSchedule]);
+  const investmentAssumptions = useMemo(
+    () =>
+      normalizeInvestmentAssumptions({
+        exchangeRateOverride,
+        loanRateAnnual: loanRate,
+        operatorBonusRatesPct,
+        volumeChangePct,
+        ticketChangePct,
+        debtRollYears,
+      }),
+    [
+      exchangeRateOverride,
+      loanRate,
+      operatorBonusRatesPct,
+      volumeChangePct,
+      ticketChangePct,
+      debtRollYears,
+    ],
+  );
+
+  useEffect(() => {
+    writeInvestmentAssumptionsToSession(investmentAssumptions);
+  }, [investmentAssumptions]);
+
+  const investmentModel = useMemo(
+    () => buildInvestmentModelFromEerr(eerrModel, investmentAssumptions),
+    [eerrModel, investmentAssumptions],
+  );
+
+  const {
+    businessFlows,
+    cashflow,
+    exchangeRate,
+    loanPrincipalUsd: loanPrincipal,
+  } = investmentModel;
 
   const excelDrivesInvestment = excelSchedule != null;
-
-  const kwaccForInvestorDiscount = useMemo(
-    () => kwaccForInvestorYears(kwaccScheduleFull),
-    [kwaccScheduleFull],
-  );
 
   const baseTotalCovers10y = useMemo(
     () => totalHorizonCovers(eerrModel.years),
@@ -133,54 +149,6 @@ export default function InvestmentTab() {
       0,
     );
   }, [eerrModel.years, scenarioActive, volumeChangePct]);
-
-  const businessFlows = useMemo(
-    () =>
-      buildScenarioBusinessFlowsFromEerr(
-        eerrModel.years,
-        {
-          exchangeRate,
-          cashFlowSchedule: excelSchedule,
-        },
-        operationalScenario,
-        baseTicket,
-      ),
-    [eerrModel.years, exchangeRate, excelSchedule, operationalScenario, baseTicket],
-  );
-
-  const investmentParams: InvestmentModelParams = useMemo(
-    () => ({
-      equityUsd,
-      totalInvestmentUsd: totalUsd,
-      loanRateAnnual: loanRate,
-      kwaccInitial: kwaccForInvestorDiscount[0] ?? kwaccScheduleFull[0] ?? 0,
-      kwaccFinal:
-        kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ??
-        kwaccScheduleFull[kwaccScheduleFull.length - 1] ??
-        0,
-      kwaccSchedule: kwaccForInvestorDiscount,
-      kwaccScheduleFull: kwaccScheduleFull,
-    }),
-    [equityUsd, totalUsd, loanRate, kwaccForInvestorDiscount, kwaccScheduleFull],
-  );
-
-  const exchangeRatesByYear = useMemo(
-    () =>
-      businessFlows.map((_, index) => {
-        const fromSchedule = excelSchedule?.exchangeRates[index + 1];
-        return fromSchedule && fromSchedule > 0 ? fromSchedule : exchangeRate;
-      }),
-    [businessFlows, excelSchedule, exchangeRate],
-  );
-
-  const cashflow = useMemo(
-    () =>
-      buildInvestorCashflow(investmentParams, businessFlows, {
-        operatorBonusTiers,
-        exchangeRatesByYear,
-      }),
-    [investmentParams, businessFlows, operatorBonusTiers, exchangeRatesByYear],
-  );
 
   const chartSeries = useMemo(() => {
     if (!scenarioActive) {
@@ -244,6 +212,7 @@ export default function InvestmentTab() {
     setVolumeChangePct(0);
     setTicketChangePct(0);
     setOperatorBonusRatesPct([40, 45, 50]);
+    setDebtRollYears(0);
   };
 
   const modelSourceLabel =
@@ -518,6 +487,46 @@ export default function InvestmentTab() {
             ))}
           </div>
         </div>
+        <div className="border-b border-stone-100 bg-white px-5 py-3">
+          <p className="text-xs font-medium text-stone-700">Roll de deuda</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-stone-400">
+            Años iniciales sin amortizar capital — solo interés. El saldo del préstamo se mantiene
+            hasta terminar el roll.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDebtRollYears((years) => Math.max(0, years - 1))}
+              disabled={debtRollYears <= 0}
+              className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Roll de deuda: un año menos"
+            >
+              −
+            </button>
+            <span
+              className={`min-w-[5.5rem] rounded-lg px-3 py-2 text-center text-sm font-bold tabular-nums ${
+                debtRollYears > 0
+                  ? "bg-amber-50 text-amber-900 ring-1 ring-amber-200/80"
+                  : "bg-stone-100 text-stone-600"
+              }`}
+            >
+              {debtRollYears} {debtRollYears === 1 ? "año" : "años"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDebtRollYears((years) => Math.min(10, years + 1))}
+              disabled={debtRollYears >= 10}
+              className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Roll de deuda: un año más"
+            >
+              +
+            </button>
+          </div>
+          <p className="mt-2 text-[12.1px] italic text-stone-400">
+            Simulá el escenario ajustando los años con − y +; la tabla y el retorno al equity se
+            recalculan al instante.
+          </p>
+        </div>
         <div className="overflow-x-auto p-5">
           <table className="w-full min-w-[960px] border-collapse text-sm">
             <thead>
@@ -550,6 +559,19 @@ export default function InvestmentTab() {
                 values={withYearZero(
                   -equityUsd,
                   cashflow.years.map(() => 0),
+                )}
+                valueKind="usd"
+                currency={displayCurrency}
+                exchangeRate={exchangeRate}
+                emphasis
+              />
+              <CashflowRow
+                label="NOF Año 1 (stock inicial · cap. trabajo)"
+                values={withYearZero(
+                  0,
+                  cashflow.years.map((_, index) =>
+                    index === 0 ? -INITIAL_NOF_STOCK_USD : 0,
+                  ),
                 )}
                 valueKind="usd"
                 currency={displayCurrency}
@@ -614,7 +636,11 @@ export default function InvestmentTab() {
                 debt
               />
               <CashflowRow
-                label="Amortización capital"
+                label={
+                  debtRollYears > 0
+                    ? `Amortización capital (roll ${debtRollYears}a sin amort.)`
+                    : "Amortización capital"
+                }
                 values={withYearZero(0, cashflow.years.map((row) => -row.principalPaid))}
                 valueKind="usd"
                 currency={displayCurrency}
@@ -691,7 +717,7 @@ export default function InvestmentTab() {
             <strong className="font-medium text-stone-600">Payback equity</strong> = cuándo los
             dividendos netos al inversor recuperan el aporte de equity (Año 0); esos flujos ya
             descontaron servicio del préstamo (~{Math.round(loanPrincipal / 1000)}k: interés +
-            amortización) y bono operadores — no suma el préstamo al monto a recuperar.{" "}
+            amortización{debtRollYears > 0 ? ` · roll ${debtRollYears}a sin amort. capital` : ""}) y bono operadores — no suma el préstamo al monto a recuperar.{" "}
             <strong className="font-medium text-stone-600">Liberación operadores</strong> ={" "}
             {Math.round(OPERATOR_EQUITY_SHARE * 100)}% del FFL remanente post-bono desde payback; desde
             ese año el reparto es 70% inversor / 30% operadores sobre el excedente.{" "}

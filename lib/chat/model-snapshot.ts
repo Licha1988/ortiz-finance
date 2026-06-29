@@ -1,18 +1,20 @@
 import { extractYearKpisFromRows } from "@/lib/cashflow/eerr-kpis";
-import { DEFAULT_EXCHANGE_RATE } from "@/lib/cashflow/exchange-rate";
-import { kwaccForInvestorYears } from "@/lib/cashflow/parse-cashflow-excel";
 import type { ParsedCashFlowSchedule } from "@/lib/cashflow/parse-cashflow-excel";
 import type { ParsedEerrExcel, EerrParam } from "@/lib/cashflow/parse-eerr-excel";
+import type { ActiveEerrModelSource } from "@/lib/cashflow/load-active-eerr-model-server";
 import { CASHFLOW_BRIDGE_LINES } from "@/lib/investment/cashflow-bridge";
-import { buildBusinessFlowsFromEerr } from "@/lib/investment/eerr-operational-flows";
-import { buildInvestorCashflow } from "@/lib/investment/investor-cashflow";
 import {
-  BASE_KWACC_SCHEDULE,
-  DEFAULT_LOAN_RATE_ANNUAL,
+  normalizeInvestmentAssumptions,
+  type InvestmentAssumptions,
+} from "@/lib/investment/investment-assumptions";
+import {
+  buildInvestmentModelFromEerr,
+  buildKwaccScheduleFromParsed,
+} from "@/lib/investment/investment-model";
+import {
   EQUITY_INVESTMENT_USD,
   FINANCING_TOTAL_USD,
   OPERATOR_EQUITY_SHARE,
-  loanPrincipalFromStructure,
 } from "@/lib/investment/project-data";
 import { totalHorizonCovers } from "@/lib/investment/scenario-volume";
 
@@ -42,6 +44,7 @@ export type ModelYearSnapshot = {
 
 export type ModelChatSnapshot = {
   sourceFileName: string;
+  modelSource: ActiveEerrModelSource;
   hasCashFlowSheet: boolean;
   exchangeRate: number;
   loanRateAnnual: number;
@@ -49,6 +52,8 @@ export type ModelChatSnapshot = {
   loanPrincipalUsd: number;
   financingTotalUsd: number;
   operatorEquityShare: number;
+  investmentAssumptions: InvestmentAssumptions;
+  totalOperatorBonusUsd: number;
   year1SalesArs: number;
   year1EbitdaArs: number;
   year1NetArs: number;
@@ -67,41 +72,17 @@ export type ModelChatSnapshot = {
   cashFlowSchedule?: ParsedCashFlowSchedule;
 };
 
-export function buildModelSnapshot(parsed: ParsedEerrExcel): ModelChatSnapshot {
-  const excelSchedule = parsed.cashFlowSchedule;
-  const exchangeRate = excelSchedule?.exchangeRates[1] ?? DEFAULT_EXCHANGE_RATE;
-
-  const kwaccScheduleFull =
-    parsed.kwaccSchedule && parsed.kwaccSchedule.length > 0
-      ? parsed.kwaccSchedule
-      : [...BASE_KWACC_SCHEDULE];
-
-  const kwaccForInvestorDiscount = kwaccForInvestorYears(kwaccScheduleFull);
-  const equityUsd = EQUITY_INVESTMENT_USD;
-  const financingTotalUsd = FINANCING_TOTAL_USD;
-  const loanPrincipalUsd = loanPrincipalFromStructure(financingTotalUsd, equityUsd);
-
-  const businessFlows = buildBusinessFlowsFromEerr(parsed.years, {
-    exchangeRate,
-    cashFlowSchedule: excelSchedule,
-  });
-
-  const cashflow = buildInvestorCashflow(
-    {
-      equityUsd,
-      totalInvestmentUsd: financingTotalUsd,
-      loanRateAnnual: DEFAULT_LOAN_RATE_ANNUAL,
-      kwaccInitial: kwaccForInvestorDiscount[0] ?? kwaccScheduleFull[0] ?? 0,
-      kwaccFinal:
-        kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ??
-        kwaccScheduleFull[kwaccScheduleFull.length - 1] ??
-        0,
-      kwaccSchedule: kwaccForInvestorDiscount,
-      kwaccScheduleFull: kwaccScheduleFull,
-    },
-    businessFlows,
-  );
-
+export function buildModelSnapshot(
+  parsed: ParsedEerrExcel,
+  options: {
+    assumptions?: Partial<InvestmentAssumptions>;
+    modelSource?: ActiveEerrModelSource;
+  } = {},
+): ModelChatSnapshot {
+  const assumptions = normalizeInvestmentAssumptions(options.assumptions);
+  const investmentModel = buildInvestmentModelFromEerr(parsed, assumptions);
+  const { businessFlows, cashflow, exchangeRate, loanPrincipalUsd } = investmentModel;
+  const kwaccScheduleFull = buildKwaccScheduleFromParsed(parsed);
   const year1Kpis = extractYearKpisFromRows(parsed.years[0]?.rows ?? []);
 
   const years: ModelYearSnapshot[] = businessFlows.map((flow, index) => {
@@ -121,13 +102,16 @@ export function buildModelSnapshot(parsed: ParsedEerrExcel): ModelChatSnapshot {
 
   return {
     sourceFileName: parsed.sourceFileName,
-    hasCashFlowSheet: excelSchedule != null,
+    modelSource: options.modelSource ?? "bundled",
+    hasCashFlowSheet: parsed.cashFlowSchedule != null,
     exchangeRate,
-    loanRateAnnual: DEFAULT_LOAN_RATE_ANNUAL,
-    equityUsd,
+    loanRateAnnual: assumptions.loanRateAnnual,
+    equityUsd: EQUITY_INVESTMENT_USD,
     loanPrincipalUsd,
-    financingTotalUsd,
+    financingTotalUsd: FINANCING_TOTAL_USD,
     operatorEquityShare: OPERATOR_EQUITY_SHARE,
+    investmentAssumptions: assumptions,
+    totalOperatorBonusUsd: cashflow.totalOperatorBonusUsd,
     year1SalesArs: year1Kpis.yearSales,
     year1EbitdaArs: year1Kpis.ebitda,
     year1NetArs: year1Kpis.netResult,
@@ -151,7 +135,7 @@ export function buildModelSnapshot(parsed: ParsedEerrExcel): ModelChatSnapshot {
     eerrConcepts: (parsed.years[0]?.rows ?? []).map((row) => row.label),
     bridgeLineLabels: CASHFLOW_BRIDGE_LINES.map((line) => line.label),
     excelParams: parsed.params,
-    kwaccScheduleFull: kwaccScheduleFull,
-    cashFlowSchedule: excelSchedule ?? undefined,
+    kwaccScheduleFull,
+    cashFlowSchedule: parsed.cashFlowSchedule ?? undefined,
   };
 }

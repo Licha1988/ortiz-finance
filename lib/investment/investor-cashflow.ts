@@ -38,6 +38,8 @@ export type InvestmentModelParams = {
 export type InvestorCashflowOptions = {
   operatorBonusTiers?: OperatorBonusTier[];
   exchangeRatesByYear?: number[];
+  /** Años iniciales sin amortizar capital del préstamo (roll de deuda). */
+  debtRollYears?: number;
 };
 
 export type InvestorCashflowYear = LoanServiceYear &
@@ -108,6 +110,7 @@ export function buildInvestorCashflow(
     loanPrincipal,
     params.loanRateAnnual,
     operationalFfl,
+    { principalRollYears: options.debtRollYears ?? 0 },
   );
 
   const exchangeRatesByYear =

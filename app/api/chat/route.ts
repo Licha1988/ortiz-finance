@@ -3,11 +3,16 @@ import {
   answerModelQuestion,
   type ChatTurn,
 } from "@/lib/chat/answer-question";
-import { loadBundledModelSnapshot } from "@/lib/chat/load-model-snapshot";
+import { loadModelSnapshot } from "@/lib/chat/load-model-snapshot";
+import {
+  normalizeInvestmentAssumptions,
+  type InvestmentAssumptions,
+} from "@/lib/investment/investment-assumptions";
 
 type ChatRequestBody = {
   question?: string;
   history?: ChatTurn[];
+  investmentAssumptions?: Partial<InvestmentAssumptions>;
 };
 
 export async function POST(request: Request) {
@@ -33,8 +38,10 @@ export async function POST(request: Request) {
       )
     : [];
 
+  const investmentAssumptions = normalizeInvestmentAssumptions(body.investmentAssumptions);
+
   try {
-    const snapshot = await loadBundledModelSnapshot();
+    const snapshot = await loadModelSnapshot(investmentAssumptions);
     const result = await answerModelQuestion(question, snapshot, history);
     return NextResponse.json(result);
   } catch (caught) {

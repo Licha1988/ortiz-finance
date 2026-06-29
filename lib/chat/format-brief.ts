@@ -14,9 +14,16 @@ export function formatModelBrief(snapshot: ModelChatSnapshot): string {
     .join("\n");
 
   return [
-    `Archivo: ${snapshot.sourceFileName}`,
+    `Archivo: ${snapshot.sourceFileName} (${snapshot.modelSource === "import" ? "importado" : "bundled"})`,
     `Hoja Cash Flow parseada: ${snapshot.hasCashFlowSheet ? "sí" : "no"}`,
     `TC Año 1 (ARS/USD): ${snapshot.exchangeRate}`,
+    "",
+    "Supuestos inversión (misma lógica que pestaña Inversión):",
+    `- Bono operadores: tramos ${snapshot.investmentAssumptions.operatorBonusRatesPct.join(" / ")}% (marginal EBITDA)`,
+    `- Tasa préstamo: ${formatPercent(snapshot.loanRateAnnual)}`,
+    `- Escenario operación: volumen ${snapshot.investmentAssumptions.volumeChangePct >= 0 ? "+" : ""}${snapshot.investmentAssumptions.volumeChangePct}% · ticket ${snapshot.investmentAssumptions.ticketChangePct >= 0 ? "+" : ""}${snapshot.investmentAssumptions.ticketChangePct}%`,
+    `- Roll de deuda: ${snapshot.investmentAssumptions.debtRollYears} año(s) sin amortizar capital (solo interés)`,
+    `- Bono operadores acum. 10a: ${formatUsd(snapshot.totalOperatorBonusUsd)}`,
     "",
     "Estructura de capital (USD):",
     `- Equity inversores: ${formatUsd(snapshot.equityUsd)} (desembolso Año 0 para TIR/VAN)`,

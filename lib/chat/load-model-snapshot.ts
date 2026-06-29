@@ -1,32 +1,57 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { loadActiveEerrModelServer } from "@/lib/cashflow/load-active-eerr-model-server";
 import {
-  BUNDLED_EERR_SOURCE_NAME,
-  loadEerrModelFromBuffer,
-} from "@/lib/cashflow/load-eerr-model";
+  DEFAULT_INVESTMENT_ASSUMPTIONS,
+  normalizeInvestmentAssumptions,
+  type InvestmentAssumptions,
+} from "@/lib/investment/investment-assumptions";
 import {
   buildModelSnapshot,
   type ModelChatSnapshot,
 } from "@/lib/chat/model-snapshot";
 
-const BUNDLED_MODEL_PATH = join(process.cwd(), "public/models/ortiz-cashflow.xlsx");
+type SnapshotCacheEntry = {
+  modelKey: string;
+  assumptionsKey: string;
+  snapshot: ModelChatSnapshot;
+};
 
-let cachedSnapshot: ModelChatSnapshot | null = null;
+let cachedSnapshot: SnapshotCacheEntry | null = null;
 
-export async function loadBundledModelSnapshot(): Promise<ModelChatSnapshot> {
-  if (cachedSnapshot) return cachedSnapshot;
-
-  const buffer = readFileSync(BUNDLED_MODEL_PATH);
-  const parsed = await loadEerrModelFromBuffer(
-    buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
-    BUNDLED_EERR_SOURCE_NAME,
-  );
-
-  cachedSnapshot = buildModelSnapshot(parsed);
-  return cachedSnapshot;
+function cacheKeyForAssumptions(assumptions: InvestmentAssumptions): string {
+  return JSON.stringify(assumptions);
 }
 
-/** Solo tests o tras reemplazar el Excel en runtime (dev). */
+export async function loadModelSnapshot(
+  partialAssumptions: Partial<InvestmentAssumptions> = {},
+): Promise<ModelChatSnapshot> {
+  const assumptions = normalizeInvestmentAssumptions({
+    ...DEFAULT_INVESTMENT_ASSUMPTIONS,
+    ...partialAssumptions,
+  });
+  const assumptionsKey = cacheKeyForAssumptions(assumptions);
+
+  const { parsed, source } = await loadActiveEerrModelServer();
+  const modelKey = `${source}:${parsed.sourceFileName}`;
+
+  if (
+    cachedSnapshot &&
+    cachedSnapshot.modelKey === modelKey &&
+    cachedSnapshot.assumptionsKey === assumptionsKey
+  ) {
+    return cachedSnapshot.snapshot;
+  }
+
+  const snapshot = buildModelSnapshot(parsed, { assumptions, modelSource: source });
+  cachedSnapshot = { modelKey, assumptionsKey, snapshot };
+  return snapshot;
+}
+
+/** @deprecated Usar loadModelSnapshot */
+export async function loadBundledModelSnapshot(): Promise<ModelChatSnapshot> {
+  return loadModelSnapshot();
+}
+
+/** Solo tests o tras reemplazar el Excel / supuestos en runtime (dev). */
 export function clearModelSnapshotCache(): void {
   cachedSnapshot = null;
 }

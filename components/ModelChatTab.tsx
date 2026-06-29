@@ -4,6 +4,10 @@ import { useCallback, useRef, useState } from "react";
 import EerrExcelActions from "@/components/EerrExcelActions";
 import SectionCard from "@/components/ui/SectionCard";
 import type { ChatAnswerMode, ChatTurn } from "@/lib/chat/answer-question";
+import {
+  DEFAULT_INVESTMENT_ASSUMPTIONS,
+  readInvestmentAssumptionsFromSession,
+} from "@/lib/investment/investment-assumptions";
 
 type ChatMessage = ChatTurn & {
   mode?: ChatAnswerMode;
@@ -62,6 +66,8 @@ export default function ModelChatTab() {
           body: JSON.stringify({
             question: trimmed,
             history: history.map(({ role, content }) => ({ role, content })),
+            investmentAssumptions:
+              readInvestmentAssumptionsFromSession() ?? DEFAULT_INVESTMENT_ASSUMPTIONS,
           }),
         });
 

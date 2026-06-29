@@ -6,16 +6,9 @@ import {
 } from "@/lib/cashflow/scenario-simulator";
 import { TICKET_PROMEDIO } from "@/lib/cashflow/eerr-model-params";
 import type { EerrYearDetailSnapshot, ModelChatSnapshot } from "@/lib/chat/model-snapshot";
+import { buildInvestorCashflowForSnapshot } from "@/lib/chat/investment-from-snapshot";
 import { rowsForSimulator } from "@/lib/chat/rows-for-simulator";
 import { buildBusinessFlowsFromEerr } from "@/lib/investment/eerr-operational-flows";
-import { buildInvestorCashflow } from "@/lib/investment/investor-cashflow";
-import { kwaccForInvestorYears } from "@/lib/cashflow/parse-cashflow-excel";
-import {
-  BASE_KWACC_SCHEDULE,
-  DEFAULT_LOAN_RATE_ANNUAL,
-  EQUITY_INVESTMENT_USD,
-  FINANCING_TOTAL_USD,
-} from "@/lib/investment/project-data";
 import type { EerrYearId } from "@/lib/cashflow/eerr-years";
 import {
   compactCurrency,
@@ -79,27 +72,6 @@ function runAtVolumeScale(
   return computeScenarioKpis(rows, { ticket, cubiertosByMonth: scaledCubiertos });
 }
 
-function buildInvestmentParams(snapshot: ModelChatSnapshot, loanRateAnnual = DEFAULT_LOAN_RATE_ANNUAL) {
-  const kwaccScheduleFull =
-    snapshot.kwaccScheduleFull.length > 0
-      ? snapshot.kwaccScheduleFull
-      : [...BASE_KWACC_SCHEDULE];
-  const kwaccForInvestorDiscount = kwaccForInvestorYears(kwaccScheduleFull);
-
-  return {
-    equityUsd: EQUITY_INVESTMENT_USD,
-    totalInvestmentUsd: FINANCING_TOTAL_USD,
-    loanRateAnnual,
-    kwaccInitial: kwaccForInvestorDiscount[0] ?? kwaccScheduleFull[0] ?? 0,
-    kwaccFinal:
-      kwaccForInvestorDiscount[kwaccForInvestorDiscount.length - 1] ??
-      kwaccScheduleFull[kwaccScheduleFull.length - 1] ??
-      0,
-    kwaccSchedule: kwaccForInvestorDiscount,
-    kwaccScheduleFull,
-  };
-}
-
 function buildBusinessFlows(snapshot: ModelChatSnapshot) {
   const yearSlices = snapshot.eerrYears.map((year) => ({
     id: `year${year.year}` as EerrYearId,
@@ -142,8 +114,7 @@ function investorMetricsForYear1Scale(
     };
   });
 
-  const params = buildInvestmentParams(snapshot);
-  const cashflow = buildInvestorCashflow(params, scaledFlows);
+  const cashflow = buildInvestorCashflowForSnapshot(snapshot, scaledFlows);
   return {
     irr: cashflow.irr,
     npv: cashflow.npv,
@@ -212,11 +183,14 @@ export function runLoanRateScenario(
 ): LoanRateScenarioResult {
   const businessFlows = buildBusinessFlows(snapshot);
   const baseRate = snapshot.loanRateAnnual;
-  const baseParams = buildInvestmentParams(snapshot, baseRate);
-  const scenarioParams = buildInvestmentParams(snapshot, scenarioRatePct / 100);
+  const scenarioRate = scenarioRatePct / 100;
 
-  const baseCashflow = buildInvestorCashflow(baseParams, businessFlows);
-  const scenarioCashflow = buildInvestorCashflow(scenarioParams, businessFlows);
+  const baseCashflow = buildInvestorCashflowForSnapshot(snapshot, businessFlows, baseRate);
+  const scenarioCashflow = buildInvestorCashflowForSnapshot(
+    snapshot,
+    businessFlows,
+    scenarioRate,
+  );
 
   const sumInterest = (years: typeof baseCashflow.years) =>
     years.reduce((sum, row) => sum + row.interestPaid, 0);

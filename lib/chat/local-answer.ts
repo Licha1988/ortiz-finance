@@ -34,7 +34,15 @@ export function tryLocalAnswer(
   }
 
   if (matches(q, ["excel", "modelo", "fuente", "archivo", "repo"])) {
-    return `El deploy usa ${snapshot.sourceFileName} en public/models/. ${snapshot.hasCashFlowSheet ? "Incluye hoja Cash Flow (NOPAT, FFL, Kwacc)." : "Sin hoja Cash Flow parseada: NOPAT se aproxima desde resultado neto EERR ÷ TC."} Podés descargarlo con el botón «Descargar Excel».`;
+    const bonusRates = snapshot.investmentAssumptions.operatorBonusRatesPct.join("/");
+    return [
+      `Fuente: ${snapshot.sourceFileName} (${snapshot.modelSource === "import" ? "importado" : "bundled del repo"}).`,
+      snapshot.hasCashFlowSheet
+        ? "Incluye hoja Cash Flow (NOPAT, FFL, Kwacc)."
+        : "Sin hoja Cash Flow parseada: NOPAT se aproxima desde resultado neto EERR ÷ TC.",
+      `Cálculo inversión alineado con la pestaña Inversión: bono operadores ${bonusRates}% (tramos marginales), servicio de deuda y split post-payback.`,
+      "Podés descargarlo con el botón «Descargar Excel».",
+    ].join(" ");
   }
 
   if (matches(q, ["estructura", "capital", "equity", "prestamo", "préstamo", "450", "110", "560"])) {
@@ -74,6 +82,7 @@ export function tryLocalAnswer(
   }
 
   if (matches(q, ["tir", "van", "npv", "retorno", "payback", "recuper"])) {
+    const bonusRates = snapshot.investmentAssumptions.operatorBonusRatesPct.join("/");
     return [
       "Retorno equity inversor (USD)",
       `· VAN: ${formatUsd(snapshot.npvUsd)}`,
@@ -83,7 +92,7 @@ export function tryLocalAnswer(
         ? `· Liberación ${formatPercent(snapshot.operatorEquityShare)} operadores: Año ${snapshot.equityReleaseYear}`
         : "",
       "",
-      "Metodología: Año 0 = −equity; Años 1–10 = dividendos netos al inversor (post split operadores cuando aplica).",
+      `Metodología: Año 0 = −equity; Años 1–10 = dividendos netos al inversor (post split operadores cuando aplica). Incluye bono operadores ${bonusRates}% (tramos marginales), servicio del préstamo y mismos supuestos que la pestaña Inversión.`,
     ]
       .filter(Boolean)
       .join("\n");
